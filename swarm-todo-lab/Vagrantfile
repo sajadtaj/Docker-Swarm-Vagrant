@@ -1,0 +1,29 @@
+# -*- mode: ruby -*-
+Vagrant.configure("2") do |config|
+  config.vm.box = "debian/bullseye64"
+
+  NODES = [
+    {name: "manager-1", ip: "192.168.100.7", mem: 2048, cpus: 2, role: "manager"},
+    {name: "worker-1",  ip: "192.168.100.8", mem: 1536, cpus: 2, role: "worker"},
+    {name: "worker-2",  ip: "192.168.100.9", mem: 1536, cpus: 2, role: "worker"}
+  ]
+
+  NODES.each do |node|
+    config.vm.define node[:name] do |n|
+      n.vm.hostname = node[:name]
+      n.vm.network "private_network", ip: node[:ip]
+      n.vm.provider "virtualbox" do |vb|
+        vb.memory = node[:mem]
+        vb.cpus = node[:cpus]
+      end
+
+      n.vm.provision "shell", path: "provision/install_docker.sh"
+
+      if node[:role] == "manager"
+        n.vm.provision "shell", path: "provision/manager.sh"
+      else
+        n.vm.provision "shell", path: "provision/worker.sh"
+      end
+    end
+  end
+end
