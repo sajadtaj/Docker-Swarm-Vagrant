@@ -1,1470 +1,1536 @@
 <div dir='rtl'>
 
-## Docker Swarm + Vagrant
+# Docker Swarm Consept
 
-### طرح کلان و معماری
+## 📌 مقدمه
 
-## هدف
+این بخش به معرفی مفاهیم کلیدی **مدیریت کلاستر (Cluster Management)** و **ارکستریشن (Orchestration)** در **Docker Engine 1.12** می‌پردازد. این قابلیت‌ها با استفاده از **Swarmkit** پیاده‌سازی شده‌اند. **Swarmkit** یک پروژه مستقل است که لایه ارکستریشن Docker را پیاده‌سازی می‌کند و مستقیماً در Docker استفاده می‌شود.
 
-1. ساخت لَب سه‌ماشینه با Vagrant برای تمرین Swarm
-2. توسعه‌ی یک Todo Service با FastAPI + PostgreSQL
-3. دیپلوی سرویس به‌صورت Stack روی Docker Swarm با مقیاس‌پذیری، Healthcheck و Rolling Update
-4. مدیریت ساده (Portainer اختیاری در فاز پایانی)
+---
 
-## توپولوژی لَب (Swarm)
+## 🐳 Swarm چیست؟
+
+یک **Swarm** مجموعه‌ای از چندین **Docker Host** است که در حالت **Swarm Mode** اجرا می‌شوند و می‌توانند دو نقش ایفا کنند:
+
+1. **مدیر (Manager)** → مدیریت عضویت، هماهنگی و توزیع وظایف.
+2. **کارگر (Worker)** → اجرای سرویس‌های Swarm.
+
+یک **Docker Host** می‌تواند:
+
+* فقط **Manager** باشد،
+* فقط **Worker** باشد،
+* یا هر دو نقش را هم‌زمان داشته باشد.
+
+### 🔹 مثال واقعی:
+
+فرض کنید یک فروشگاه آنلاین دارید که باید همیشه در دسترس باشد. شما ۵ سرور دارید:
+
+* ۲ سرور به عنوان **Manager** برای کنترل و هماهنگی.
+* ۳ سرور به عنوان **Worker** برای اجرای درخواست‌ها و پردازش سفارشات.
+
+اگر یکی از Workerها از کار بیفتد، Swarm به صورت خودکار وظایف آن را به دیگر Workerها منتقل می‌کند.
+
+---
+
+## 🎯 Desired State (وضعیت مطلوب)
+
+وقتی یک سرویس ایجاد می‌کنید، مواردی مانند:
+
+* تعداد Replicaها،
+* منابع شبکه و ذخیره‌سازی،
+* پورت‌های باز به بیرون،
+* و سایر تنظیمات
+
+را مشخص می‌کنید. Swarm به طور خودکار تلاش می‌کند این **وضعیت مطلوب** را حفظ کند.
+
+> تفاوت کلیدی سرویس‌های Swarm با کانتینرهای تکی (**Standalone Containers**) این است که می‌توانید **تنظیمات سرویس** (مانند شبکه یا Volume) را تغییر دهید بدون اینکه نیاز باشد سرویس را دستی ریستارت کنید.
+
+---
+
+## 🖥 Nodes (نودها)
+
+یک **Node** همان نمونه‌ای از Docker Engine است که در Swarm شرکت دارد.
+
+* **Manager Node** → وظایف ارکستریشن و مدیریت کلاستر را انجام می‌دهد و یک **Leader** انتخاب می‌کند.
+* **Worker Node** → وظایفی که از Manager دریافت کرده اجرا می‌کند.
+
+🔹 **مثال واقعی:**
+در یک استارتاپ SaaS، ممکن است نودهای Worker روی AWS EC2 باشند و نودهای Manager روی سرورهای فیزیکی محلی برای امنیت بیشتر نگهداری شوند.
+
+---
+
+## ⚙ Services و Tasks
+
+* **Service** → تعریف وظایفی که باید روی Manager یا Worker اجرا شوند.
+* **Task** → کوچک‌ترین واحد زمان‌بندی در Swarm که شامل یک کانتینر و دستور اجرای آن است.
+
+دو مدل سرویس:
+
+1. **Replicated Services** → مثلاً ۵ Replica از یک API در نودهای مختلف.
+2. **Global Services** → اجرای یک نسخه از سرویس روی تمام نودهای موجود (مثل یک Agent مانیتورینگ).
+
+🔹 **مثال واقعی:**
+
+* سرویس **Nginx** به صورت **Replicated** با ۴ Replica.
+* سرویس **Node Exporter** برای مانیتورینگ به صورت **Global** روی همه نودها.
+
+---
+
+## 🌐 Load Balancing (بالانس بار)
+
+Swarm دو نوع Load Balancing دارد:
+
+1. **Ingress Load Balancing (بیرونی)**
+
+   * اختصاص پورت منتشرشده (Published Port) بین 30000–32767 به سرویس.
+   * درخواست‌های ورودی به هر نود به سرویس مربوطه هدایت می‌شوند.
+
+2. **Internal Load Balancing (داخلی)**
+
+   * هر سرویس یک رکورد DNS داخلی دارد.
+   * درخواست‌ها داخل کلاستر بر اساس نام DNS بین Taskها توزیع می‌شوند.
+
+🔹 **مثال واقعی:**
+کاربر در آلمان به آدرس `myshop.com` وصل می‌شود، درخواست او به نزدیک‌ترین نود Worker می‌رود و Swarm آن را به یکی از Replicaها هدایت می‌کند.
+
+---
+
+## 📊 نمودار Mermaid – معماری Docker Swarm
+
+```mermaid
+graph TD
+    A[Client Request] --> B[Ingress Load Balancer]
+    B --> C1[Manager Node]
+    B --> C2[Worker Node 1]
+    B --> C3[Worker Node 2]
+    
+    C1 -->|Orchestration| D1[Task 1 - Service API]
+    C2 -->|Executes Task| D2[Task 2 - Service API]
+    C3 -->|Executes Task| D3[Task 3 - Service API]
+    
+    subgraph Managers
+        C1
+    end
+    
+    subgraph Workers
+        C2
+        C3
+    end
+```
+
+---
+
+## 📌 جمع‌بندی
+
+| مفهوم              | توضیح                                        | مثال واقعی                      |
+| ------------------ | -------------------------------------------- | ------------------------------- |
+| **Swarm**          | خوشه‌ای از Docker Hostها برای اجرای سرویس‌ها | وب‌سایت فروش آنلاین چندسرویسی   |
+| **Manager Node**   | هماهنگ‌کننده وظایف و حفظ وضعیت مطلوب         | کنترل Replicaها و Load Balancer |
+| **Worker Node**    | اجرای وظایف دریافتی از Manager               | پردازش درخواست کاربران          |
+| **Service**        | تعریف وظایف و کانتینرها                      | سرویس API محصول                 |
+| **Task**           | واحد اجرایی شامل یک کانتینر                  | اجرای یک Replica از API         |
+| **Load Balancing** | توزیع درخواست‌ها بین نودها                   | تقسیم درخواست‌ها بین ۴ سرور API |
+
+---
+# Swarm mode
+
+
+## 📌 معرفی
+
+نسخه‌های فعلی **Docker** شامل **حالت Swarm** هستند که امکان مدیریت بومی یک کلاستر از Docker Engine‌ها را فراهم می‌کنند (که به آن **Swarm** گفته می‌شود).
+با استفاده از **Docker CLI** می‌توانید:
+
+* یک Swarm ایجاد کنید.
+* سرویس‌های برنامه را روی Swarm مستقر کنید.
+* رفتار Swarm را مدیریت کنید.
+
+> **نکته مهم:** حالت جدید **Docker Swarm mode** داخل Docker Engine تعبیه شده است و نباید با **Docker Classic Swarm** (که دیگر توسعه داده نمی‌شود) اشتباه گرفته شود.
+
+---
+
+## ✨ ویژگی‌های کلیدی
+
+### 1. **مدیریت کلاستر یکپارچه با Docker Engine**
+
+* با استفاده از **Docker Engine CLI** می‌توانید یک کلاستر Swarm بسازید و سرویس‌ها را مستقر کنید.
+* نیازی به نرم‌افزار ارکستریشن جداگانه ندارید.
+
+🔹 **مثال واقعی:**
+یک شرکت SaaS با سه سرور می‌تواند فقط با Docker Engine، کلاستر Swarm خود را بالا بیاورد و سرویس‌های وب، پایگاه داده و پردازش پیام را مدیریت کند.
+
+---
+
+### 2. **طراحی غیرمتمرکز (Decentralized Design)**
+
+* نیازی به تعیین نقش نودها در زمان استقرار نیست؛ Docker Engine این نقش‌ها را در زمان اجرا مشخص می‌کند.
+* از یک **ایمیج دیسک واحد** می‌توانید هم نودهای Manager و هم Worker بسازید.
+
+🔹 **مثال:**
+تصور کنید برای توسعه و تست، همه نودها از یک Snapshot سرور ساخته شده‌اند و نقش آن‌ها در زمان اجرا تعیین می‌شود.
+
+---
+
+### 3. **مدل سرویس اعلامی (Declarative Service Model)**
+
+* وضعیت مطلوب (Desired State) سرویس‌ها را تعریف می‌کنید.
+* مثال: یک اپلیکیشن شامل سرویس Frontend وب، سرویس صف پیام (Message Queue)، و Backend پایگاه داده.
+
+---
+
+### 4. **مقیاس‌پذیری (Scaling)**
+
+* تعداد **Task**‌های هر سرویس را مشخص می‌کنید.
+* در زمان افزایش یا کاهش مقیاس، Swarm Manager به صورت خودکار Taskها را اضافه یا حذف می‌کند.
+
+🔹 **مثال:**
+یک سرویس API از ۳ Replica به ۶ Replica افزایش می‌یابد تا ترافیک بیشتر را پاسخ دهد.
+
+---
+
+### 5. **تطبیق وضعیت مطلوب (Desired State Reconciliation)**
+
+* Manager همیشه وضعیت واقعی کلاستر را با وضعیت مطلوب مقایسه می‌کند.
+* اگر نودی که بخشی از Replicaها را اجرا می‌کند از کار بیفتد، Manager نسخه‌های جایگزین را روی نودهای سالم ایجاد می‌کند.
+
+---
+
+### 6. **شبکه چند‌میزبانه (Multi-host Networking)**
+
+* می‌توانید یک **Overlay Network** برای سرویس‌ها تعیین کنید.
+* Swarm Manager به کانتینرها آدرس IP در این شبکه اختصاص می‌دهد.
+
+---
+
+### 7. **کشف سرویس (Service Discovery)**
+
+* هر سرویس یک نام DNS منحصربه‌فرد دریافت می‌کند.
+* Load Balancing داخلی بر اساس نام DNS سرویس انجام می‌شود.
+
+---
+
+### 8. **بالانس بار (Load Balancing)**
+
+* می‌توانید پورت سرویس‌ها را به یک Load Balancer خارجی معرفی کنید.
+* به‌صورت داخلی، Swarm نحوه توزیع کانتینرهای سرویس بین نودها را کنترل می‌کند.
+
+---
+
+### 9. **امنیت پیش‌فرض (Secure by Default)**
+
+* همه نودها از TLS Mutual Authentication و رمزنگاری برای ارتباطات استفاده می‌کنند.
+* امکان استفاده از **Self-signed Certificate** یا **Custom Root CA** وجود دارد.
+
+---
+
+### 10. **به‌روزرسانی تدریجی (Rolling Updates)**
+
+* به‌روزرسانی سرویس‌ها به‌صورت تدریجی روی نودها اعمال می‌شود.
+* امکان **Rollback** به نسخه قبلی در صورت بروز مشکل وجود دارد.
+
+🔹 **مثال:**
+آپدیت تدریجی نسخه جدید Backend روی ۲۰٪ نودها، بررسی عملکرد، و سپس ادامه انتشار روی باقی نودها.
+
+---
+
+## 📊 نمودار Mermaid – معماری و ویژگی‌های Swarm Mode
 
 ```mermaid
 graph LR
-  A[manager-1 192.168.56.10]:::mgr -->|overlay: app-net| B[worker-1 192.168.56.11]:::wrk
-  A -->|overlay: app-net| C[worker-2 192.168.56.12]:::wrk
-
-classDef mgr fill:#2b6cb0,color:#fff,stroke:#11365f,stroke-width:2px;
-classDef wrk fill:#4a5568,color:#fff,stroke:#1a202c,stroke-width:1px;
-```
-
-* شبکه Host-Only: `192.168.56.0/24`
-* Swarm init روی **manager-1**، Workers به کلاستر جوین می‌شوند
-* **Overlay network** برای سرویس‌ها: `app-net`
-* **PostgreSQL** با Volume پایدار (روی manager برای سادگی لَب)
-* **API** (FastAPI) با ۳ Replica و Rolling update
-
----
-
-# ساختار پوشه‌ها (Repository Layout)
-
-</div>
-
-```
-swarm-todo-lab/
-├─ Vagrantfile
-├─ provision/
-│  ├─ install_docker.sh          # نصب Docker و compose-plugin
-│  ├─ manager.sh                 # init swarm + ساخت overlay + ذخیره توکن
-│  └─ worker.sh                  # join به کلاستر
-├─ scripts/
-│  ├─ deploy_stack.sh            # ساخت secret و deploy stack
-│  └─ remove_stack.sh            # حذف stack و پاکسازی
-├─ app/
-│  ├─ backend/
-│  │  ├─ app/
-│  │  │  ├─ __init__.py
-│  │  │  ├─ main.py              # FastAPI entrypoint
-│  │  │  ├─ database.py          # SQLAlchemy Session
-│  │  │  ├─ models.py            # Todo model
-│  │  │  ├─ schemas.py           # Pydantic DTOs
-│  │  │  ├─ crud.py              # عملیات CRUD
-│  │  │  └─ routers/
-│  │  │     ├─ __init__.py
-│  │  │     └─ todos.py          # مسیرهای /todos
-│  │  ├─ Dockerfile
-│  │  └─ requirements.txt
-│  ├─ compose.dev.yml            # اجرا در حالت dev (بدون Swarm)
-│  └─ stack.yml                  # فایل stack برای Swarm
-├─ .env                          # متغیرهای dev
-├─ .env.swarm                    # متغیرهای deploy روی Swarm
-├─ Makefile                      # شورتکات‌های اجرایی
-└─ README.md
-```
-
-<div dir='rtl'>
-
----
-
-# فازبندی اجرای پروژه
-
-#### فاز 0 — پیش‌نیاز و Bootstrap
-
-**هدف:** آماده‌سازی مخزن و ابزارها
-**ابزار لازم روی سیستم شما:**
-
-* VirtualBox (آخرین نسخه پایدار)
-* Vagrant (پیشنهادی: 2.4+)
-* Git
-
-**خروجی/مسیرها که تکمیل می‌شود:**
-
-* ساختار پوشه‌ها + فایل‌های خالی بالا
-* `README.md` اولیه با دستورات
-
----
-
-#### فاز 1 — ساخت لَب با Vagrant و راه‌اندازی Swarm
-
-**هدف:** سه VM (۱ مدیر + ۲ ورکر) و تشکیل کلاستر Swarm
-
-**فایل‌ها/محتوا (پیشنهاد نهایی برای تأیید):**
-
----
-
-#### فاز 2 — توسعه Todo API (FastAPI + SQLAlchemy)
-
-**هدف:** پیاده‌سازی CRUD کامل، لایه‌بندی ساده و آماده‌سازی برای کانتینرسازی
-
-#### فاز 3 — اجرای Dev (بدون Swarm) برای تست سریع
-
-#### فاز 4 — آماده‌سازی Stack برای Swarm و دیپلوی
-
-> نکته: برای استفاده از secret داخل env، این ترفند `$(cat /run/secrets/pg_password)` با shell-expansion کار می‌کند چون Swarm به صورت مستقیم secrets را به env تزریق نمی‌کند. در صورت نیاز، entrypoint سفارشی هم می‌توانیم بذاریم. (اگر ترجیح بدی، از متغیر `POSTGRES_PASSWORD_FILE` فقط در db استفاده کنیم و در API از DSN بدون پسورد یا با user/host trust در شبکه داخلی استفاده کنیم—اما این رو فعلاً ساده و امن نگه می‌داریم.)
-
-#### فاز 5 — مقیاس‌پذیری، به‌روزرسانی و مدیریت
-
-**موارد تکمیلی این فاز:**
-
-* افزایش/کاهش Replicaها: `docker service scale todo_api=5`
-* تست Rolling Update با تغییر نسخه ایمیج
-* محدودیت منابع (CPU/Memory) که در stack.yml گذاشته‌ایم
-* (اختیاری) افزودن **Portainer** برای مدیریت آسان Swarm:
-
-  * یک سرویس ساده Portainer روی manager با Volume جهت ذخیره داده‌ها
-
----
-
-# جدول فازها و فایل‌های هر فاز
-
-| فاز | هدف          | فایل‌ها/مسیرهایی که ساخته یا ویرایش می‌شوند | خروجی قابل تست                  |
-| ------ | --------------- | -------------------------------------------------------------------------------- | ------------------------------------------- |
-| 0      | Bootstrap       | اسکلت پوشه‌ها، README, .env نمونه                              | —                                          |
-| 1      | لَب و Swarm | `Vagrantfile`, `provision/*`                                                 | `docker node ls` در manager             |
-| 2      | Backend CRUD    | `app/backend/app/*`, `requirements.txt`, `Dockerfile`                      | اجرای محلی با Uvicorn (پایه) |
-| 3      | Dev Compose     | `app/compose.dev.yml`, `.env`                                                | `http://localhost:8000/healthz` و CRUD   |
-| 4      | Swarm Stack     | `app/stack.yml`, `.env.swarm`, `scripts/deploy_stack.sh`                   | `http://192.168.56.10:8080`               |
-| 5      | Scale/Update    | تغییر `stack.yml`، دستورات scale/update                           | Rolling Update + Scale                      |
-
-# Phase 1
-
-## 🎯 هدف فاز ۱
-
-* ساخت یک لَب سه‌ماشینه با **Vagrant + VirtualBox**
-* نصب Docker Engine و پلاگین Compose روی هر نود
-* راه‌اندازی یک کلاستر **Docker Swarm**
-* ایجاد یک شبکه Overlay مشترک به نام `app-net` برای سرویس‌ها
-
----
-
-## 📂 ساختار فایل‌ها و مسیرها
-
-```
-swarm-todo-lab/
-├─ Vagrantfile
-├─ provision/
-│  ├─ install_docker.sh     # نصب Docker روی هر نود (سازگار با Debian/Ubuntu)
-│  ├─ manager.sh            # init Swarm روی مدیر + ساخت شبکه app-net + ذخیره توکن جوین
-│  └─ worker.sh             # join به کلاستر با استفاده از توکن ذخیره‌شده
-```
-
----
-
-## 📜 محتوای فایل‌ها
-
-### **`Vagrantfile`**
-
-</div>
-
-```ruby
-# -*- mode: ruby -*-
-Vagrant.configure("2") do |config|
-  config.vm.box = "debian/bullseye64"
-
-  NODES = [
-    {name: "manager-1", ip: "192.168.100.7", mem: 2048, cpus: 2, role: "manager"},
-    {name: "worker-1",  ip: "192.168.100.8", mem: 1536, cpus: 2, role: "worker"},
-    {name: "worker-2",  ip: "192.168.100.9", mem: 1536, cpus: 2, role: "worker"}
-  ]
-
-  NODES.each do |node|
-    config.vm.define node[:name] do |n|
-      n.vm.hostname = node[:name]
-      n.vm.network "private_network", ip: node[:ip]
-      n.vm.provider "virtualbox" do |vb|
-        vb.memory = node[:mem]
-        vb.cpus = node[:cpus]
-      end
-
-      n.vm.provision "shell", path: "provision/install_docker.sh"
-
-      if node[:role] == "manager"
-        n.vm.provision "shell", path: "provision/manager.sh"
-      else
-        n.vm.provision "shell", path: "provision/worker.sh"
-      end
+    subgraph Swarm Cluster
+        M1[Manager Node 1]:::manager
+        M2[Manager Node 2]:::manager
+        W1[Worker Node 1]:::worker
+        W2[Worker Node 2]:::worker
+        W3[Worker Node 3]:::worker
     end
-  end
-end
+    
+    M1 -->|Orchestration| W1
+    M1 -->|Orchestration| W2
+    M1 -->|Orchestration| W3
+    
+    subgraph Features
+        A[Cluster Management]
+        B[Declarative Services]
+        C[Scaling]
+        D[Load Balancing]
+        E[Rolling Updates]
+        F[Secure by Default]
+    end
+    
+    M1 --> A
+    M1 --> B
+    M1 --> C
+    M1 --> D
+    M1 --> E
+    M1 --> F
+
+    %% class manager fill=#4DB6AC,stroke=#00695C,color=white;
+    %% class worker fill=#81C784,stroke=#1B5E20,color=white;
 ```
 
 ---
 
-### **`provision/install_docker.sh`**  *(سازگار با Debian و Ubuntu)*
+## 📌 جمع‌بندی ویژگی‌ها
+
+| ویژگی                            | توضیح                                   | مثال واقعی                              |
+| -------------------------------- | --------------------------------------- | --------------------------------------- |
+| **Cluster Management**           | ساخت و مدیریت کلاستر داخل Docker Engine | کلاستر ۵ نودی برای سرویس فروشگاه        |
+| **Decentralized Design**         | نقش نودها در زمان اجرا تعیین می‌شود     | استفاده از یک ایمیج واحد برای همه نودها |
+| **Declarative Model**            | تعریف وضعیت مطلوب سرویس‌ها              | سرویس وب + صف پیام + پایگاه داده        |
+| **Scaling**                      | افزایش یا کاهش تعداد Taskها             | افزایش Replica از ۳ به ۶                |
+| **Desired State Reconciliation** | جایگزینی خودکار Taskها پس از خرابی      | ایجاد ۲ Replica جایگزین پس از Crash     |
+| **Multi-host Networking**        | شبکه Overlay بین چند سرور               | ارتباط سرویس‌ها در دیتاسنتر و Cloud     |
+| **Service Discovery**            | تخصیص DNS داخلی و Load Balancing        | `api_service` قابل دسترسی با DNS داخلی  |
+| **Load Balancing**               | توزیع درخواست‌ها بین نودها              | استفاده از Nginx یا HAProxy خارجی       |
+| **Secure by Default**            | ارتباط امن با TLS                       | تبادل امن داده بین نودهای AWS           |
+| **Rolling Updates**              | انتشار تدریجی آپدیت                     | آپدیت نسخه جدید بدون Downtime           |
+
+---
+
+# Getting started with Swarm mode
+
+## 📌 شروع کار با حالت Swarm در Docker
+
+این آموزش شما را با قابلیت‌های حالت **Swarm Mode** در **Docker Engine** آشنا می‌کند.
+پیشنهاد می‌شود قبل از شروع، با **[مفاهیم کلیدی](../key-concepts.md)** آشنا شوید.
+
+این آموزش شامل مراحل زیر است:
+
+1. **راه‌اندازی یک کلاستر از Docker Engine‌ها در حالت Swarm**
+2. **اضافه کردن نودها به Swarm**
+3. **استقرار سرویس‌های برنامه روی Swarm**
+4. **مدیریت Swarm پس از راه‌اندازی**
+
+> این مراحل با استفاده از **دستورات CLI در Docker** و اجرای آن‌ها در ترمینال انجام می‌شود.
+> اگر تازه‌کار هستید، ابتدا [About Docker Engine](../../_index.md) را مطالعه کنید.
+
+---
+
+## 🛠 پیش‌نیازها
+
+برای اجرای این آموزش به موارد زیر نیاز دارید:
+
+* **سه ماشین لینوکسی** که روی آن‌ها Docker نصب باشد و بتوانند از طریق شبکه با هم ارتباط برقرار کنند.
+* **آدرس IP ماشین Manager**
+* **باز بودن پورت‌های مشخص بین ماشین‌ها**
+
+---
+
+### 1. سه ماشین میزبان شبکه‌شده (Three Networked Host Machines)
+
+* می‌تواند ماشین فیزیکی، ماشین مجازی، **Amazon EC2 Instance** یا هر سرویس دیگری باشد.
+* یکی از این ماشین‌ها نقش **Manager** دارد (با نام `manager1`) و دو ماشین دیگر نقش **Worker** (`worker1` و `worker2`).
+
+> 💡 **نکته:** می‌توانید بسیاری از مراحل را حتی با یک نود انجام دهید (Single-node swarm)، ولی دستورات مربوط به چند نود کار نخواهند کرد.
+
+---
+
+#### نصب Docker Engine روی ماشین‌های لینوکسی
+
+اگر از ماشین‌های لینوکسی (فیزیکی یا ابری) استفاده می‌کنید:
+
+* دستورالعمل نصب لینوکس را در [صفحه نصب Docker](../../install/_index.md) دنبال کنید.
+* پس از نصب و راه‌اندازی ۳ ماشین، آماده کار هستید.
+* می‌توانید سناریوهای **یک‌نودی** و **چندنودی** را آزمایش کنید.
+
+---
+
+### 2. آدرس IP ماشین Manager
+
+* باید به یک **رابط شبکه (Network Interface)** معتبر در سیستم‌عامل اختصاص داده شده باشد.
+* همه نودها باید به این IP وصل شوند.
+* توصیه می‌شود از یک **IP ثابت (Static IP)** استفاده کنید.
+
+🔹 **مثال:** در این آموزش، `manager1` دارای IP زیر است:
+
+```
+192.168.99.100
+```
+
+برای مشاهده IP:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# بهبود پایداری apt
-cat >/etc/apt/apt.conf.d/99retries <<'CFG'
-Acquire::Retries "5";
-Acquire::http::Timeout "30";
-Acquire::https::Timeout "30";
-CFG
-
-# تشخیص توزیع و کدنام
-. /etc/os-release
-OS_ID="${ID:-}"
-CODENAME="${VERSION_CODENAME:-}"
-
-if [[ -z "${OS_ID}" || -z "${CODENAME}" ]]; then
-  echo "Cannot detect OS or codename from /etc/os-release"
-  exit 1
-fi
-
-# پاکسازی لیست‌های قبلی Docker (در صورت وجود)
-rm -f /etc/apt/sources.list.d/docker.list || true
-install -m 0755 -d /etc/apt/keyrings
-
-# نصب پیش‌نیازها
-apt-get update -y || true
-apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release apt-transport-https
-
-# اضافه کردن کلید Docker
-curl -fsSL https://download.docker.com/linux/${OS_ID}/gpg | gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-# اضافه کردن مخزن Docker
-case "${OS_ID}" in
-  ubuntu)
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/ubuntu ${CODENAME} stable" > /etc/apt/sources.list.d/docker.list
-    ;;
-  debian)
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/debian ${CODENAME} stable" > /etc/apt/sources.list.d/docker.list
-    ;;
-  *)
-    echo "Unsupported OS: ${OS_ID}"
-    exit 1
-    ;;
-esac
-
-# آپدیت و نصب Docker
-if ! apt-get update -y; then
-  # در صورت مشکل HTTPS، به HTTP سوییچ کن
-  sed -i 's|https://deb.debian.org|http://deb.debian.org|g' /etc/apt/sources.list 2>/dev/null || true
-  sed -i 's|https://security.debian.org|http://security.debian.org|g' /etc/apt/sources.list 2>/dev/null || true
-  apt-get update -y
-fi
-
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# اضافه کردن کاربر vagrant به گروه docker
-usermod -aG docker vagrant || true
-systemctl enable docker
-systemctl restart docker
-
-echo "Docker installed on ${OS_ID} (${CODENAME})."
+ifconfig
 ```
 
 ---
 
-### **`provision/manager.sh`**
+### 3. باز بودن پروتکل‌ها و پورت‌ها بین میزبان‌ها
+
+پورت‌های موردنیاز (در برخی سیستم‌ها به‌صورت پیش‌فرض باز هستند):
+
+| پورت / پروتکل   | کاربرد                      |
+| --------------- | --------------------------- |
+| `2377/TCP`      | ارتباط بین نودهای Manager   |
+| `7946/TCP, UDP` | کشف نودها در شبکه Overlay   |
+| `4789/UDP`      | ترافیک شبکه Overlay (VXLAN) |
+
+> اگر از شبکه Overlay با رمزگذاری (`--opt encrypted`) استفاده می‌کنید، باید **پروتکل IP شماره 50 (IPSec ESP)** نیز باز باشد.
+
+---
+
+### نکات امنیتی پورت 4789 (VXLAN)
+
+* این پورت باید فقط به **شبکه‌های مورد اعتماد** باز باشد.
+* هرگز آن را در **Firewall محیط مرزی (Perimeter Firewall)** به روی اینترنت باز نکنید.
+* برای امنیت بیشتر در شبکه‌های غیرقابل اعتماد:
+
+  * **شبکه Ingress پیش‌فرض** را سفارشی‌سازی و رمزگذاری کنید.
+  * تنها بسته‌های رمزگذاری‌شده را روی پورت Data Path بپذیرید.
+
+نمونه قانون **iptables**:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# پیدا کردن IP نود مدیر به‌صورت خودکار از شبکه 192.168.*
-MANAGER_IP="${SWARM_ADVERTISE_IP:-$(ip -4 addr show | awk '/inet 192\.168\./ {print $2}' | cut -d/ -f1 | head -n1)}"
-
-if [[ -z "${MANAGER_IP}" ]]; then
-  echo "Cannot detect manager IP automatically. Set SWARM_ADVERTISE_IP."
-  exit 1
-fi
-
-# راه‌اندازی Swarm
-if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
-  docker swarm init --advertise-addr "${MANAGER_IP}"
-fi
-
-# ساخت شبکه overlay برای سرویس‌ها
-docker network ls | grep -q "app-net" || docker network create -d overlay --attachable app-net
-
-# ذخیره توکن join برای ورکرها
-WORKER_TOKEN=$(docker swarm join-token -q worker)
-cat > /vagrant/provision/join-worker.sh <<EOF
-#!/usr/bin/env bash
-docker swarm join --token ${WORKER_TOKEN} ${MANAGER_IP}:2377
-EOF
-chmod +x /vagrant/provision/join-worker.sh
-
-echo "Swarm initialized on ${MANAGER_IP} and app-net created."
+iptables -I INPUT -m udp --dport 4789 -m policy --dir in --pol none -j DROP
 ```
 
 ---
 
-### **`provision/worker.sh`**
+## 📊 نمودار Mermaid – توپولوژی Swarm
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-if docker info 2>/dev/null | grep -q "Swarm: active"; then
-  echo "Already in Swarm."
-  exit 0
-fi
-
-if [[ -x /vagrant/provision/join-worker.sh ]]; then
-  /vagrant/provision/join-worker.sh || true
-else
-  echo "join-worker.sh not ready. Re-provision after manager is up."
-fi
-```
-
-<div dir='rtl'>
----
-
-## 🛠 مراحل اجرا
-
-### 1) بالا آوردن نود مدیر
-
-```bash
-vagrant up manager-1
-```
-
-این کار:
-
-* سیستم عامل Debian bullseye64 را بالا می‌آورد.
-* Docker و compose-plugin را نصب می‌کند.
-* Swarm را init می‌کند.
-* شبکه overlay به نام `app-net` می‌سازد.
-* توکن join برای ورکرها را ذخیره می‌کند.
-
----
-
-### 2) بالا آوردن دو نود ورکر
-
-```bash
-vagrant up worker-1 worker-2
-```
-
-این کار:
-
-* هر ورکر را بالا می‌آورد.
-* Docker نصب می‌شود.
-* با استفاده از `join-worker.sh` به Swarm متصل می‌شوند.
-
----
-
-### 3) بررسی وضعیت کلاستر
-
-روی مدیر:
-
-```bash
-vagrant ssh manager-1 -c "docker node ls"
-```
-
-خروجی مورد انتظار:
-
-```
-ID                            HOSTNAME    STATUS    AVAILABILITY   MANAGER STATUS   ENGINE VERSION
-xxxx...                       manager-1   Ready     Active         Leader           28.x.x
-yyyy...                       worker-1    Ready     Active                          28.x.x
-zzzz...                       worker-2    Ready     Active                          28.x.x
+```mermaid
+graph TD
+    A[Manager Node: 192.168.99.100] -->|Port 2377| B[Worker Node 1]
+    A -->|Port 2377| C[Worker Node 2]
+    A -->|Overlay Network Port 7946 TCP/UDP, 4789 UDP| B
+    A -->|Overlay Network Port 7946 TCP/UDP, 4789 UDP| C
+    B <--> C
+    %% classDef manager fill=#4DB6AC,stroke=#00695C,color=white;
+    %% classDef worker fill=#81C784,stroke=#1B5E20,color=white;
+    class A manager;
+    class B worker;
+    class C worker;
 ```
 
 ---
 
-### 4) بررسی شبکه overlay
+## 📌 مثال واقعی
+
+سناریو راه‌اندازی یک Swarm سه‌نودی روی **سه ماشین مجازی Ubuntu** در یک دیتاسنتر خصوصی:
+
+1. روی `manager1`:
 
 ```bash
-vagrant ssh manager-1 -c "docker network ls | grep app-net"
+docker swarm init --advertise-addr 192.168.99.100
 ```
 
-باید `app-net` را ببینی:
+2. خروجی دستور بالا شامل یک **توکن Join** برای Workerها است. روی هر Worker اجرا کنید:
 
+```bash
+docker swarm join --token <token> 192.168.99.100:2377
 ```
-td2aaorzznb6   app-net           overlay   swarm
+
+3. بررسی وضعیت نودها:
+
+```bash
+docker node ls
+```
+
+# Create a swarm
+
+
+## 🚀 ایجاد یک Swarm در Docker
+
+پس از اتمام مراحل [تنظیمات اولیه](index.md)، می‌توانید یک **Swarm** ایجاد کنید.
+اطمینان حاصل کنید که **Docker Engine daemon** روی تمام ماشین‌های میزبان شما در حال اجراست.
+
+---
+
+### 1️⃣ اتصال به ماشین Manager
+
+یک ترمینال باز کرده و با استفاده از **SSH** به ماشینی که قرار است نقش **Manager** را داشته باشد وصل شوید.
+در این آموزش، ماشین **`manager1`** به‌عنوان Manager استفاده می‌شود.
+
+```bash
+ssh user@manager1
 ```
 
 ---
 
-## ✅ نتیجه فاز ۱
+### 2️⃣ اجرای دستور ایجاد Swarm
 
-* سه نود Swarm فعال داریم.
-* همه نودها `Ready` هستند.
-* شبکه `app-net` برای سرویس‌های آینده آماده است.
+برای ایجاد Swarm، دستور زیر را اجرا کنید:
+
+```bash
+docker swarm init --advertise-addr <MANAGER-IP>
+```
+
+در این مثال، دستور به این شکل است:
+
+```bash
+docker swarm init --advertise-addr 192.168.99.100
+```
+
+📌 **خروجی نمونه:**
+
+```
+Swarm initialized: current node (dxn1zf6l61qsb1josjja83ngz) is now a manager.
+
+To add a worker to this swarm, run the following command:
+
+    docker swarm join \
+    --token SWMTKN-1-49nj1cmql0jkz5s954yi3oex3nedyz0fb0xx14ie39trti4wxv-8vxv8rssmk743ojnwacrr2e7c \
+    192.168.99.100:2377
+
+To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
+```
+
+🔹 **توضیح:**
+پارامتر `--advertise-addr` باعث می‌شود نود Manager آدرس IP خودش را به‌صورت `192.168.99.100` به بقیه نودها اعلام کند. سایر نودها باید بتوانند به این IP دسترسی داشته باشند.
+
+🔹 **کلید امنیتی (`--token`)**
+
+* برای اضافه کردن **Worker** یا **Manager** به Swarm استفاده می‌شود.
+* نوع نود بر اساس توکن استفاده شده مشخص می‌شود.
 
 ---
 
-# Phase 2
+### 3️⃣ بررسی وضعیت Swarm
 
-در این فاز فقط می‌خواهیم سرویس‌ها را با Docker Compose روی **همان نود manager-1** بالا بیاوریم و CRUD را تست کنیم. (هنوز Swarm/stack در کار نیست.)
+برای مشاهده وضعیت فعلی Swarm:
+
+```bash
+docker info
+```
+
+📌 **خروجی نمونه:**
+
+```
+Swarm: active
+  NodeID: dxn1zf6l61qsb1josjja83ngz
+  Is Manager: true
+  Managers: 1
+  Nodes: 1
+```
+
+این خروجی نشان می‌دهد که Swarm فعال است و این نود نقش **Manager** دارد.
 
 ---
 
-## پیش‌نیاز
+### 4️⃣ مشاهده لیست نودها
 
-```
-swarm-todo-lab/
-│ 
-├─ app/
-│  ├─ backend/
-│  │  ├─ app/
-│  │  │  ├─ __init__.py
-│  │  │  ├─ main.py              # FastAPI entrypoint
-│  │  │  ├─ database.py          # SQLAlchemy Session
-│  │  │  ├─ models.py            # Todo model
-│  │  │  ├─ schemas.py           # Pydantic DTOs
-│  │  │  ├─ crud.py              # عملیات CRUD
-│  │  │  └─ routers/
-│  │  │     ├─ __init__.py
-│  │  │     └─ todos.py          # مسیرهای /todos
-│  │  ├─ Dockerfile
-│  │  └─ requirements.txt
-│  ├─ compose.dev.yml            # اجرا در حالت dev (بدون Swarm)
-│  └─ stack.yml                  # فایل stack برای Swarm
+برای مشاهده اطلاعات نودهای موجود در Swarm:
+
+```bash
+docker node ls
 ```
 
-* در `routers/todos.py`، روی `startup` جدول‌ها با `Base.metadata.create_all` ساخته می‌شوند؛ پس نیازی به migration جدا نداریم.
+📌 **خروجی نمونه:**
 
-> نکته: این نسخه برای **فاز ۲ (dev-compose)** و **آمادگی اولیه Swarm** کفایت می‌کند. بعداً در فاز Swarm، اگر خواستی Secret هم اضافه کنیم، فقط `stack.yml` را کمی بهبود می‌دهیم.
+```
+ID                           HOSTNAME  STATUS  AVAILABILITY  MANAGER STATUS
+dxn1zf6l61qsb1josjja83ngz *  manager1  Ready   Active        Leader
+```
+
+🔹 علامت `*` نشان می‌دهد که شما روی همین نود متصل هستید.
+🔹 ستون **MANAGER STATUS** مقدار **Leader** را نشان می‌دهد، یعنی این نود نقش لیدر Managerها را دارد.
 
 ---
 
-## 1) `app/backend/app/__init__.py`
+## 📊 نمودار Mermaid – ایجاد Swarm و نقش‌ها
 
-```python
-# خالی بماند؛ فقط برای پکیج‌شدن ماژول
-```
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant M as Manager Node (manager1)
+    participant W1 as Worker Node 1
+    participant W2 as Worker Node 2
 
-## 2) `app/backend/app/database.py`
-
-```python
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-import os
-
-# در dev-compose: postgresql://todo:todo@db:5432/todo_db
-# در Swarm (ساده): از env مشابه استفاده می‌کنیم
-DB_URL = os.getenv("DATABASE_URL", "postgresql://todo:todo@db:5432/todo_db")
-
-engine = create_engine(DB_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-```
-
-## 3) `app/backend/app/models.py`
-
-```python
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
-from .database import Base
-
-class Todo(Base):
-    __tablename__ = "todos"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(200), nullable=False)
-    description = Column(String(1000), nullable=True)
-    is_done = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-```
-
-## 4) `app/backend/app/schemas.py`
-
-```python
-from pydantic import BaseModel
-
-class TodoCreate(BaseModel):
-    title: str
-    description: str | None = None
-
-class TodoUpdate(BaseModel):
-    title: str | None = None
-    description: str | None = None
-    is_done: bool | None = None
-
-class TodoOut(BaseModel):
-    id: int
-    title: str
-    description: str | None
-    is_done: bool
-
-    class Config:
-        from_attributes = True
-```
-
-## 5) `app/backend/app/crud.py`
-
-```python
-from sqlalchemy.orm import Session
-from . import models, schemas
-
-def create_todo(db: Session, data: schemas.TodoCreate):
-    todo = models.Todo(title=data.title, description=data.description)
-    db.add(todo)
-    db.commit()
-    db.refresh(todo)
-    return todo
-
-def list_todos(db: Session):
-    return db.query(models.Todo).order_by(models.Todo.id.desc()).all()
-
-def get_todo(db: Session, todo_id: int):
-    return db.get(models.Todo, todo_id)
-
-def update_todo(db: Session, todo_id: int, data: schemas.TodoUpdate):
-    todo = db.get(models.Todo, todo_id)
-    if not todo:
-        return None
-    for k, v in data.model_dump(exclude_unset=True).items():
-        setattr(todo, k, v)
-    db.commit()
-    db.refresh(todo)
-    return todo
-
-def delete_todo(db: Session, todo_id: int):
-    todo = db.get(models.Todo, todo_id)
-    if not todo:
-        return False
-    db.delete(todo)
-    db.commit()
-    return True
-```
-
-## 6) `app/backend/app/routers/__init__.py`
-
-```python
-# خالی
-```
-
-## 7) `app/backend/app/routers/todos.py`
-
-```python
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from ..database import SessionLocal, Base, engine
-from .. import schemas, crud
-
-router = APIRouter(prefix="/todos", tags=["todos"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-@router.on_event("startup")
-def on_startup():
-    # برای سادگی آموزشی: ساخت جدول‌ها در استارتاپ
-    Base.metadata.create_all(bind=engine)
-
-@router.get("/", response_model=list[schemas.TodoOut])
-def list_(db: Session = Depends(get_db)):
-    return crud.list_todos(db)
-
-@router.post("/", response_model=schemas.TodoOut, status_code=201)
-def create_(data: schemas.TodoCreate, db: Session = Depends(get_db)):
-    return crud.create_todo(db, data)
-
-@router.get("/{todo_id}", response_model=schemas.TodoOut)
-def get_(todo_id: int, db: Session = Depends(get_db)):
-    todo = crud.get_todo(db, todo_id)
-    if not todo:
-        raise HTTPException(404, "Not found")
-    return todo
-
-@router.put("/{todo_id}", response_model=schemas.TodoOut)
-def update_(todo_id: int, data: schemas.TodoUpdate, db: Session = Depends(get_db)):
-    todo = crud.update_todo(db, todo_id, data)
-    if not todo:
-        raise HTTPException(404, "Not found")
-    return todo
-
-@router.delete("/{todo_id}", status_code=204)
-def delete_(todo_id: int, db: Session = Depends(get_db)):
-    ok = crud.delete_todo(db, todo_id)
-    if not ok:
-        raise HTTPException(404, "Not found")
-```
-
-## 8) `app/backend/app/main.py`
-
-```python
-from fastapi import FastAPI
-from .routers import todos
-
-app = FastAPI(title="Swarm Todo API")
-app.include_router(todos.router)
-
-@app.get("/healthz")
-def health():
-    return {"status": "ok"}
-```
-
-## 9) `app/backend/requirements.txt`
-
-```
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-SQLAlchemy==2.0.34
-psycopg2-binary==2.9.9
-pydantic==2.9.1
-```
-
-## 10) `app/backend/Dockerfile`
-
-```dockerfile
-FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-WORKDIR /app
-
-# برای psycopg2-binary به gcc نیاز داریم (بسته‌ها را کم نگه می‌داریم)
-RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
-
-COPY app/backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/backend/app ./app
-
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host","0.0.0.0","--port","8000"]
-```
-
-## 11) `app/compose.dev.yml`
-
-```yaml
-version: "3.9"
-
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: todo
-      POSTGRES_PASSWORD: todo
-      POSTGRES_DB: todo_db
-    volumes:
-      - todo_pg_data:/var/lib/postgresql/data
-    ports:
-      - "54320:5432"
-
-  api:
-    build:
-      context: ..
-      dockerfile: app/backend/Dockerfile
-    environment:
-      DATABASE_URL: postgresql://todo:todo@db:5432/todo_db
-    depends_on:
-      - db
-    ports:
-      - "8000:8000"
-
-volumes:
-  todo_pg_data:
-```
-
-## 12) `app/stack.yml`
-
-> ساده‌ترین نسخه برای Swarm (فعلاً بدون secret برای ساده‌سازی آموزشی). بعداً می‌تونیم Secret اضافه کنیم و `start.sh` بذاریم.
-
-```yaml
-version: "3.9"
-
-networks:
-  app-net:
-    external: true
-
-volumes:
-  pg_data:
-
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-todo}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-todo}
-      POSTGRES_DB: ${POSTGRES_DB:-todo_db}
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    networks:
-      - app-net
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: on-failure
-      resources:
-        limits:
-          cpus: "0.50"
-          memory: 512M
-
-  api:
-    build:
-      context: ..
-      dockerfile: app/backend/Dockerfile
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-todo}:${POSTGRES_PASSWORD:-todo}@db:5432/${POSTGRES_DB:-todo_db}
-    depends_on:
-      - db
-    networks:
-      - app-net
-    ports:
-      - "8080:8000"
-    deploy:
-      replicas: 3
-      update_config:
-        parallelism: 1
-        delay: 10s
-        failure_action: rollback
-        order: start-first
-      restart_policy:
-        condition: on-failure
-      resources:
-        limits:
-          cpus: "0.25"
-          memory: 256M
-      healthcheck:
-        test: ["CMD-SHELL", "wget -qO- http://localhost:8000/healthz || exit 1"]
-        interval: 10s
-        timeout: 2s
-        retries: 5
-        start_period: 10s
+    U->>M: docker swarm init --advertise-addr 192.168.99.100
+    M-->>U: Swarm initialized (Manager Token & Worker Token)
+    U->>W1: docker swarm join --token <Worker-Token> 192.168.99.100:2377
+    U->>W2: docker swarm join --token <Worker-Token> 192.168.99.100:2377
+    M->>M: docker node ls (List all nodes)
 ```
 
 ---
 
+## 🎯 نکات کلیدی
 
- ## 1. اجرای Compose روی manager-1
+| گام              | توضیح                             | نکته امنیتی / عملیاتی                           |
+| ---------------- | --------------------------------- | ----------------------------------------------- |
+| اتصال به Manager | SSH به ماشین Manager              | مطمئن شوید پورت‌های 22 و Swarm باز هستند        |
+| ایجاد Swarm      | `docker swarm init`               | استفاده از IP ثابت برای جلوگیری از مشکلات اتصال |
+| اضافه کردن نودها | استفاده از توکن Worker یا Manager | توکن‌ها را امن نگه دارید                        |
+| بررسی وضعیت      | `docker info` و `docker node ls`  | مانیتورینگ نودها بعد از Join                    |
 
-روی ماشین میزبان (سیستم خودت)، دستور زیر را بزن تا داخل VM اجرا شود:
+---
+# Add nodes to the swarm
 
-```bash
-# برای ارسال کل ساختار  appبه درون نود manager
-vagrant reload manager-1
+## 🖥 افزودن نودها به Swarm
 
-# وارد نود manager شدن
-vagrant ssh manager-1
-
-
-cd /vagrant/app
-
-docker compose -f compose.dev.yml up --build -d
-docker compose -f compose.dev.yml ps
-```
-
-**انتظار خروجی `ps`:**
-
-* سرویس `db` با وضعیت `running`
-* سرویس `api` با وضعیت `running` و مپ‌شدن پورت `8000:8000`
+پس از اینکه [یک Swarm ایجاد کردید](create-swarm.md) و یک نود **Manager** راه‌اندازی شد، می‌توانید نودهای **Worker** را به آن اضافه کنید.
 
 ---
 
-## 2.  تست Health و CRUD
+### 1️⃣ اتصال به نود Worker اول
 
-### Health
-
-```bash
-# داخل manager-1
-curl -s http://localhost:8000/healthz
-# خروجی:
-# {"status":"ok"}
-```
-
-### ایجاد یک تسک (Create)
+یک ترمینال باز کرده و با **SSH** به ماشینی که می‌خواهید نقش **Worker** داشته باشد وصل شوید.
+در این مثال، نام این ماشین `worker1` است:
 
 ```bash
-# ایجاد تسک
-curl -s -H 'Content-Type: application/json' \
-  -d '{"title":"first task","description":"via dev compose"}' \
-  http://localhost:8000/todos/
-```
-
-### لیست‌گرفتن (Read/List)
-
-```bash
-# لیست
-curl -s http://localhost:8000/todos/
-# خروجی آرایه‌ای از تسک‌ها؛ تسک ایجادشده را باید ببینی
-```
-
-### خواندن یک آیتم خاص (Read/By ID)
-
-```bash
-curl -s http://localhost:8000/todos/1
-```
-
-### بروزرسانی (Update)
-
-```bash
-curl -sX PUT http://localhost:8000/todos/1 \
-  -H 'Content-Type: application/json' \
-  -d '{"is_done": true}'
-```
-
-### حذف (Delete)
-
-```bash
-curl -s -X DELETE http://localhost:8000/todos/1 -i | head -n1
-# باید Status 204 ببینی
-```
-
-> اگر می‌خواهی از میزبان (خارج از VM) تست کنی:
->
-> * پورت dev به `8000:8000` مپ شده. اما چون داخل VM است، لازم است پورت ماشین مجازی را هم فوروارد کنیم یا با SSH port-forward تست بزنیم. ساده‌ترین راه در این فاز: تست‌ها را داخل خود **manager-1** بزن تا مطمئن شویم کد صحیح کار می‌کند.
-
----
-
-## 3. مشاهده لاگ‌ها و خطایابی سریع
-
-### لاگ‌ها
-
-```bash
-docker compose -f compose.dev.yml logs -f api
-docker compose -f compose.dev.yml logs -f db
-```
-
-### مجدد‌سازی جدول‌ها (در صورت خطای دیتابیس)
-
-* سرویس `api` روی استارتاپ جدول‌ها را می‌سازد. اگر قبل از آماده‌شدن DB بالا آمده باشد و خطا بدهد:
-
-```bash
-docker compose -f compose.dev.yml restart api
-```
-
-### ریست کامل Dev (بدون از دست‌دادن دیتا)
-
-```bash
-docker compose -f compose.dev.yml down
-docker compose -f compose.dev.yml up -d
-```
-
-### پاک‌کردن کامل دیتا Dev (Volume)
-
-```bash
-docker compose -f compose.dev.yml down -v
-docker compose -f compose.dev.yml up --build -d
-```
-
----
-## 4. بررسی db
-
-+ دیدن حداول
-
-```bash
-# درون محیط manager
-vagrant ssh manager-1  
-
-docker exec -it app-db-1 psql -U todo -d todo_db -c '\dt'
-
-```
-
-#### output:
-          List of relations
-    Schema | Name  | Type  | Owner 
-    --------+-------+-------+-------
-    public | todos | table | todo
-               (1 row)
-
-+  دیدن رکورد ها
-
-```bash
-docker exec -it app-db-1 psql -U todo -d todo_db -c 'SELECT * FROM todos ORDER BY id DESC;'
-
-```
-
-    id |   title    |   description   | is_done |          created_at           
-    ----+------------+-----------------+---------+-------------------------------
-      2 | first task | via dev compose | f       | 2025-08-14 09:40:21.353212+00
-    (1 row)
-
-
-
-## 5. جمع‌بندی فاز ۲
-
-* API با Compose بالا آمده و با PostgreSQL Dev کار می‌کند.
-* CRUD تست شد و پاسخ صحیح گرفتیم.
-* با این اطمینان، می‌توانیم وارد **فاز ۳ (آماده‌سازی Swarm Stack)** شویم:
-
-  * اضافه‌کردن `start.sh` برای خواندن Secret پسورد از Swarm
-  * اصلاح `Dockerfile` برای استفاده از `start.sh`
-  * به‌روزرسانی `app/stack.yml` تا `api` از Secret استفاده کند
-  * اسکریپت‌های deploy/remove که آماده‌اند
-
-# Phase 3
-
-# اصلاحات مینیمال (بدون اضافه‌کردن فایل)
-
-## 1) به‌روزرسانی `app/backend/Dockerfile`
-
-فقط **دستور CMD** را عوض کن تا اگر Secret موجود بود از آن استفاده کند، وگرنه در Dev از پسورد env ساده استفاده شود:
-
-```dockerfile
-FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
-COPY app/backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/backend/app ./app
-
-EXPOSE 8000
-# ⬇️ بدون افزودن فایل جدید؛ خواندن secret در صورت وجود
-CMD ["/bin/sh","-c","\
-  : ${POSTGRES_USER:=todo}; \
-  : ${POSTGRES_DB:=todo_db}; \
-  : ${POSTGRES_HOST:=db}; \
-  if [ -f /run/secrets/pg_password ]; then \
-    DB_PASS=$(cat /run/secrets/pg_password); \
-  else \
-    DB_PASS=${POSTGRES_PASSWORD:-todo}; \
-  fi; \
-  export DATABASE_URL=postgresql://${POSTGRES_USER}:${DB_PASS}@${POSTGRES_HOST}:5432/${POSTGRES_DB}; \
-  exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
-"]
-```
-
-* Dev (Compose): از `POSTGRES_PASSWORD=todo` استفاده می‌شود.
-* Swarm: اگر Secret `pg_password` mount شده باشد، از آن خوانده می‌شود.
-
-> هیچ فایل جدیدی اضافه نشد؛ فقط خود `Dockerfile` تغییر کرد.
-
----
-
-## 2) به‌روزرسانی `app/stack.yml`
-
-همان ساختار قبلی را نگه می‌داریم؛ فقط اطمینان می‌دهیم Secret به هر دو سرویس داده شود، و DB از `POSTGRES_PASSWORD_FILE` بهره ببرد. (در API فقط **mount** می‌کنیم؛ خواندنش را همان CMD انجام می‌دهد.)
-
-```yaml
-version: "3.9"
-
-secrets:
-  pg_password:
-    external: true
-
-networks:
-  app-net:
-    external: true
-
-volumes:
-  pg_data:
-
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-todo}
-      POSTGRES_DB: ${POSTGRES_DB:-todo_db}
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
-    secrets:
-      - pg_password
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    networks:
-      - app-net
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: on-failure
-      resources:
-        limits:
-          cpus: "0.50"
-          memory: 512M
-
-  api:
-    # برای لَب ساده: ایمیج را لوکال روی manager می‌سازیم
-    image: swarm-todo-api:1.0.0
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-todo}
-      POSTGRES_DB: ${POSTGRES_DB:-todo_db}
-      POSTGRES_HOST: db
-      # توجه: پاس‌دادن پسورد از طریق env برای Swarm لازم نیست—CMD خودش از secret می‌خواند
-    secrets:
-      - pg_password
-    depends_on:
-      - db
-    networks:
-      - app-net
-    ports:
-      - "8080:8000"
-    deploy:
-      replicas: 2
-      placement:
-        constraints:
-          - node.role == manager      # تا وقتی رجیستری نداریم
-      update_config:
-        parallelism: 1
-        delay: 10s
-        failure_action: rollback
-        order: start-first
-      restart_policy:
-        condition: on-failure
-      resources:
-        limits:
-          cpus: "0.25"
-          memory: 256M
-      healthcheck:
-        test: ["CMD-SHELL", "wget -qO- http://localhost:8000/healthz || exit 1"]
-        interval: 10s
-        timeout: 2s
-        retries: 5
-        start_period: 10s
-```
-
-> معماری/مسیرها/نام‌ها عین نقشه اولیه حفظ شده‌اند.
-
----
-# Phase 4
-
-## 1) تصویر کلی معماری
-
-```
-Host (Laptop) ─┐
-               ├── Vagrant + VirtualBox
-               │
-               └── VM: manager-1 (192.168.100.7)
-                    ├── Docker Swarm (Manager, Leader)
-                    ├── Overlay Network: todo_todo_net
-                    ├── Stack: todo
-                    │   ├── Service: todo_db  (postgres:16)
-                    │   │   └── Volume: todo_pg_data  (داده‌ی پایدار Postgres)
-                    │   └── Service: todo_api (swarm-todo-api:1.0.1)
-                    │       └── Published Port: 8080 -> 8000
-                    └── مسیر پروژه: /vagrant (bind mount از میزبان)
-```
-
-```
-swarm-todo-lab/
-│
-├─ app/
-│  ├─ backend/
-│  │  ├─ app/
-│  │  │  ├─ __init__.py
-│  │  │  ├─ main.py              # FastAPI entrypoint
-│  │  │  ├─ database.py          # SQLAlchemy Session
-│  │  │  ├─ models.py            # Todo model
-│  │  │  ├─ schemas.py           # Pydantic DTOs
-│  │  │  ├─ crud.py              # عملیات CRUD
-│  │  │  └─ routers/
-│  │  │     ├─ __init__.py
-│  │  │     └─ todos.py          # مسیرهای /todos
-│  │  ├─ Dockerfile
-│  │  └─ requirements.txt
-│  ├─ compose.dev.yml            # اجرا در حالت dev (بدون Swarm)
-│  └─ stack.yml                  # فایل stack برای Swarm
-├─ .env                          # متغیرهای dev
-└─ .env.swarm                    # متغیرهای deploy روی Swarm
-```
-
-* **API** از طریق **VIP** روی شبکه‌ی overlay به سرویس **db** (نام سرویس: `db`) وصل می‌شود.
-* **پایگاه‌داده** روی **Postgres 16** اجرا می‌شود (مهم: با نسخه 16 init شده؛ پس باید با 16 بماند مگر اینکه ولوم را پاک کنید).
-* برای **سادگی آموزشی** در فاز ۴، **از Secret صرف‌نظر کردیم** و **`DATABASE_URL`** را **مستقیم** از env ساختیم (امنیت قابل قبول در لاب؛ در تولید بهتر است Secret).
-
----
-
-## 2) ساختار فایل‌ها (فقط قطعات مؤثر در فاز ۴)
-
-### 2.1) `.env.swarm` (ریشه‌ی repo: `swarm-todo-lab/.env.swarm`)
-
-> روی **manager-1** از همین فایل envها را بارگذاری می‌کنیم تا جایگزینی `${...}` در `stack.yml` عمل کند.
-
-```env
-POSTGRES_USER=todo
-POSTGRES_PASSWORD=StrongPass123!
-POSTGRES_DB=todo_db
-```
-
-> نکته: **این فایل داخل VM در `/vagrant/.env.swarm`** قرار دارد.
-
----
-
-### 2.2) `app/stack.yml` (نهایی، ساده و پایدار)
-
-> این نسخه همان است که اکنون کار می‌کند: **Postgres 16** + **DATABASE\_URL مستقیم**.
-
-```yaml
-version: "3.9"
-
-networks:
-  todo_net: {}
-
-volumes:
-  todo_pg_data: {}
-
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - todo_pg_data:/var/lib/postgresql/data
-    networks:
-      - todo_net
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-
-  api:
-    image: swarm-todo-api:1.0.1
-    environment:
-      # ساخت DSN مستقیم از env (ساده‌ترین مسیر آموزشی)
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-    ports:
-      - "8080:8000"
-    networks:
-      - todo_net
-    # توجه: depends_on در Swarm ترتیب و Health را تضمین نمی‌کند؛ اینجا حذف شده
-    deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-```
-
-**چرا این نسخه پایدار است؟**
-
-* از **\$(...)** داخل YAML خبری نیست (Swarm YAML شِل‌اکسپند نمی‌کند).
-* هر دو سرویس **از همان env** استفاده می‌کنند، پس mismatch پسورد نداریم.
-* نسخه‌ی Postgres با داده‌ی ولوم هم‌خوان است (16 ← 16).
-
----
-
-### 2.3) `app/backend/Dockerfile` (نسخه Minimal برای Swarm)
-
-> همین که الان باهاش build می‌کنی.
-
-```dockerfile
-FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-WORKDIR /app
-
-# ابزارهای موردنیاز (psycopg2 → gcc لازم؛ تست‌های ping به DB → postgresql-client)
-RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc bash curl postgresql-client \
- && rm -rf /var/lib/apt/lists/*
-
-COPY app/backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/backend/app ./app
-
-EXPOSE 8000
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-> نکته: **هیچ entrypoint پیچیده‌ای نداریم**؛ سادگی را حفظ کردیم.
-
----
-
-### 2.4) `app/backend/app/database.py` (الگوی نهایی با `DATABASE_URL`)
-
-> نسخه‌ای که با `DATABASE_URL` به‌خوبی کار می‌کند (هم در dev، هم در swarm):
-
-```python
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-import os
-
-# در dev/Swarm با env ست می‌شود:
-DB_URL = os.getenv("DATABASE_URL", "postgresql://todo:todo@db:5432/todo_db")
-
-engine = create_engine(DB_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-```
-
-> اگر بعداً خواستی Secret-File استفاده کنی، می‌توانیم اینجا DSN را از فایل پسورد بسازیم (در بخش «گزینه حرفه‌ای» آمده است).
-
----
-
-## 3) گام‌های اجرا (دقیق، با محل اجرای هر دستور)
-
-> **همهٔ دستورات این بخش روی VM `manager-1` اجرا می‌شوند.**
->
-> ورود به VM (از میزبان):
->
-> ```bash
-> vagrant ssh manager-1
-> ```
-
-### 3.1) بارگذاری env
-
-```bash
-cd /vagrant
-set -a; . ./.env.swarm; set +a
-```
-
-### 3.2) ساخت ایمیج API (روی manager-1 و در `/vagrant`)
-
-```bash
-docker image build --no-cache -t swarm-todo-api:1.0.1 -f app/backend/Dockerfile .
-```
-
-> اگر کلاستر چندنودی فعال داری و سرویس روی workerها هم scheduling شود:
->
-> * یا **روی هر نود همان ایمیج را build** کن،
-> * یا ایمیج را در **Registry مشترک** push کن و در `stack.yml` از نام رجیستری استفاده کن.
-
-### 3.3) دیپلوی Stack
-
-```bash
-docker stack deploy -c app/stack.yml todo
-```
-
-### 3.4) بررسی وضعیت
-
-```bash
-docker stack services todo
-docker service ps todo_db
-docker service ps todo_api
-docker service logs -f todo_db
-docker service logs -f todo_api
-```
-
-باید چیزی شبیه زیر ببینی:
-
-```
-ID   NAME      MODE       REPLICAS  IMAGE                 PORTS
-...  todo_db   replicated 1/1       postgres:16
-...  todo_api  replicated 1/1       swarm-todo-api:1.0.1  *:8080->8000/tcp
-```
-
-### 3.5) تست API
-
-```bash
-# health
-curl -s http://192.168.100.7:8080/healthz
-# → {"status":"ok"}
-
-# ایجاد یک TODO
-curl -s -H 'Content-Type: application/json' \
-  -d '{"title":"task on swarm","description":"env-only simple path"}' \
-  http://192.168.100.7:8080/todos/
-# → {"id":1,"title":"task on swarm","description":"env-only simple path","is_done":false}
-
-# لیست
-curl -s http://192.168.100.7:8080/todos/
-# → [{"id":1,"title":"task on swarm",...}]
+ssh user@worker1
 ```
 
 ---
 
-## 4) مهم‌ترین نکات و دام‌ها (با علت و راه‌حل دقیق)
+### 2️⃣ اجرای دستور Join برای Worker
 
-### 4.1) **نسخه‌ی Postgres و ولوم**
-
-* خطا:
-
-  ```
-  The data directory was initialized by PostgreSQL version 16,
-  which is not compatible with this version 15.13
-  ```
-* علت: ولوم `todo_pg_data` قبلاً با **Postgres 16** init شده بود؛ وقتی ایمیج را به **15** تغییر دادیم، DB بالا نیامد.
-* راه‌حل‌ها:
-
-  * **راه ساده:** روی **16** بمان (همان‌طور که الان هست).
-  * **راه دیگر:** اگر خواستی به 15 تغییر دهی، **ولوم را پاک کن** تا از نو init شود:
-
-    ```bash
-    docker stack rm todo
-    sleep 5
-    docker volume rm todo_pg_data
-    # سپس deploy مجدد
-    ```
-
-### 4.2) **پسورد DB و پایداری با Volume**
-
-* اگر Postgres با پسوردی init شده باشد، **تغییر env** در دیپلوی بعدی **پسورد را عوض نمی‌کند**.
-* برای تغییر واقعی پسورد:
-
-  * یا **ولوم را پاک کن** تا init جدید با پسورد جدید انجام شود.
-  * یا با ابزارهای Postgres کاربر/پسورد را داخل DB تغییر بده (برای لاب آموزشی، پاک‌کردن ولوم ساده‌تر است).
-
-### 4.3) **استفاده از `$(cat ...)` داخل `stack.yml` ممنوع**
-
-* Swarm فایل YAML را با **shell** تفسیر نمی‌کند. عبارت‌های `$(...)` باعث خطای parsing می‌شوند:
-
-  ```
-  invalid interpolation format ...
-  ```
-* راه‌حل‌ها:
-
-  * یا **DATABASE\_URL** را با `${...}` از `.env.swarm` بساز (الگوی نهایی ما).
-  * یا از Secret-File استفاده کن و **داخل کد** فایل پسورد را بخوان (گزینهٔ حرفه‌ایِ بعدی).
-
-### 4.4) **depends\_on در Swarm**
-
-* در Swarm، `depends_on` مانند Compose **منتظر health سرویس دیگر نمی‌ماند**.
-* بنابراین نباید روی آن برای ترتیب واقعی start/ready حساب کنی.
-  (ما حذفش کردیم و API به خوبی کار می‌کند؛ اگر نیاز شد، در API retry/pg\_isready اضافه می‌کنیم.)
-
-### 4.5) **نام سرویس DB در DSN**
-
-* در شبکهٔ overlay، **نام سرویس** رزولوشن DNS است، نه نام کانتینر.
-  پس **هاست را `db`** بگذار، چون سرویس DB در `stack.yml` با نام `db` تعریف شده است.
-  (اشتباه‌هایی مثل `todo_db` یا `postgres` باعث خطای name resolution می‌شود.)
-
-### 4.6) **Local Image و چند نودی**
-
-* پیام:
-
-  ```
-  image swarm-todo-api:1.0.1 could not be accessed on a registry ...
-  ```
-* یعنی Swarm digest واحدی ثبت نکرده؛ اگر task روی نود دیگر schedule شود و آن نود ایمیج را نداشته باشد، fail می‌شود.
-* راه‌حل:
-
-  * روی **همهٔ نودها** build کن **یا**
-  * ایمیج را **push** کن و از رجیستری مشترک بگیر.
-
-### 4.7) **عدم وجود ابزارهای موردنیاز داخل ایمیج**
-
-* اگر تصمیم بگیری قبل از اجرای API، `pg_isready`/`nc` اجرا کنی، باید **داخل Dockerfile** ابزارها را نصب کرده باشی.
-  (ما الان ساده کردیم و این مرحله را نداریم؛ اما `postgresql-client` را نگه داشتیم که مفید است.)
-
----
-
-## 5) «گزینهٔ حرفه‌ای» (اختیاری): بازگشت به Secret-File (امن‌تر)
-
-اگر بعداً خواستی **پسورد را از Secret بخوانی**:
-
-### 5.1) ساخت Secret از `.env.swarm`
+دستور **Join** را از خروجی `docker swarm init` (روی Manager) کپی کرده و روی Worker اجرا کنید:
 
 ```bash
-cd /vagrant
-set -a; . ./.env.swarm; set +a
-printf "%s" "$POSTGRES_PASSWORD" | docker secret create todo_pg_password -
+docker swarm join \
+  --token SWMTKN-1-49nj1cmql0jkz5s954yi3oex3nedyz0fb0xx14ie39trti4wxv-8vxv8rssmk743ojnwacrr2e7c \
+  192.168.99.100:2377
 ```
 
-> اگر Secret موجود است و با سرویس‌ها در حال استفاده، ابتدا **Stack را بردار**، بعد Secret را حذف/بساز:
+📌 **خروجی موفقیت‌آمیز:**
+
+```
+This node joined a swarm as a worker.
+```
+
+---
+
+#### 🔹 اگر دستور Join را گم کردید
+
+روی یک **Manager Node** این دستور را اجرا کنید تا توکن و دستور Join برای Worker را ببینید:
 
 ```bash
-docker stack rm todo
-sleep 5
-docker secret rm todo_pg_password
-printf "%s" "$POSTGRES_PASSWORD" | docker secret create todo_pg_password -
+docker swarm join-token worker
 ```
 
-### 5.2) تغییر `stack.yml`
+خروجی مشابه:
 
-```yaml
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_PASSWORD_FILE: /run/secrets/todo_pg_password
-    secrets: [todo_pg_password]
-    ...
-
-  api:
-    image: swarm-todo-api:1.0.1
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_HOST: db
-      POSTGRES_PASSWORD_FILE: /run/secrets/todo_pg_password
-    secrets: [todo_pg_password]
-    ...
-
-secrets:
-  todo_pg_password:
-    external: true
 ```
+To add a worker to this swarm, run the following command:
 
-### 5.3) تغییر `database.py` برای خواندن از فایل Secret
-
-```python
-import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-
-def get_db_url():
-    # اگر DATABASE_URL ست شده، همان را استفاده کن (انعطاف dev/prod)
-    dsn = os.getenv("DATABASE_URL")
-    if dsn:
-        return dsn
-
-    pw_file = os.getenv("POSTGRES_PASSWORD_FILE")
-    if not pw_file:
-        # fallback ساده؛ صرفاً برای حالت آموزشی
-        return "postgresql://todo:todo@db:5432/todo_db"
-
-    with open(pw_file, "r") as f:
-        password = f.read().strip()
-
-    user = os.getenv("POSTGRES_USER", "todo")
-    db   = os.getenv("POSTGRES_DB", "todo_db")
-    host = os.getenv("POSTGRES_HOST", "db")
-    return f"postgresql://{user}:{password}@{host}:5432/{db}"
-
-DB_URL = get_db_url()
-engine = create_engine(DB_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+    docker swarm join \
+    --token SWMTKN-1-49nj1cmql0jkz5s954yi3oex3nedyz0fb0xx14ie39trti4wxv-8vxv8rssmk743ojnwacrr2e7c \
+    192.168.99.100:2377
 ```
-
-> یادآوری: Secret در حال استفاده را **نمی‌توان مستقیم overwrite** کرد؛ یا Stack را پایین بیاور، یا با **اسم جدید Secret** سرویس را update کن.
 
 ---
 
-## 6) دستورهای نگهداری و عیب‌یابی
+### 3️⃣ اتصال به نود Worker دوم
 
-* وضعیت سرویس‌ها:
+به ماشین دوم (`worker2`) SSH بزنید:
 
-  ```bash
-  docker stack services todo
-  docker service ps todo_api
-  docker service ps todo_db
-  ```
-
-* لاگ‌ها:
-
-  ```bash
-  docker service logs -f todo_api
-  docker service logs -f todo_db
-  ```
-
-* پاک‌سازی کامل (ولوم و سرویس‌ها):
-
-  ```bash
-  docker stack rm todo
-  sleep 5
-  docker volume rm todo_pg_data 2>/dev/null || true
-
-  # اگر خالی بود:
-  # docker service ls -q | xargs -r docker service rm
-  ```
-
-* رولینگ آپدیت API (بدون ویرایش فایل):
-
-  ```bash
-  docker build -t swarm-todo-api:1.0.2 -f app/backend/Dockerfile /vagrant
-  docker service update --image swarm-todo-api:1.0.2 todo_api
-  # برگشت:
-  # docker service update --image swarm-todo-api:1.0.1 todo_api
-  ```
+```bash
+ssh user@worker2
+```
 
 ---
 
-## 7) چک‌لیست نهایی فاز ۴
+### 4️⃣ اجرای دستور Join برای Worker دوم
 
-* [x] `stack.yml` به نسخه‌ی **ساده و پایدار** (بدون secret) تنظیم شد.
-* [x] نسخه‌ی Postgres برابر با دیتای ولوم: **16**.
-* [x] `DATABASE_URL` از `.env.swarm` ساخته می‌شود (با `set -a`).
-* [x] API و DB هر دو `1/1` Running.
-* [x] تست‌های `healthz`, `POST /todos`, `GET /todos` موفق.
-* [x] دام‌های مهم (نسخه Postgres، پسورد، \$(...) در YAML، depends\_on) برطرف و مستند شد.
-* [x] مسیر حرفه‌ایِ Secret-File نیز مستند شد (اختیاری برای فاز بعد).
+همان دستور Join را برای اتصال Worker دوم به Swarm اجرا کنید:
+
+```bash
+docker swarm join \
+  --token SWMTKN-1-49nj1cmql0jkz5s954yi3oex3nedyz0fb0xx14ie39trti4wxv-8vxv8rssmk743ojnwacrr2e7c \
+  192.168.99.100:2377
+```
+
+📌 **خروجی:**
+
+```
+This node joined a swarm as a worker.
+```
 
 ---
 
-اگر بخواهی، می‌تونم همین محتوای مستند را به‌صورت یک **README مخصوص فاز ۴** (با همین فایل‌ها و دستورهای دقیق) در repo اضافه کنم تا همیشه مرجع داشته باشی.
+### 5️⃣ بررسی نودهای Swarm از روی Manager
+
+به نود **Manager** برگردید و دستور زیر را اجرا کنید:
+
+```bash
+docker node ls
+```
+
+📌 **نمونه خروجی:**
+
+```
+ID                           HOSTNAME  STATUS  AVAILABILITY  MANAGER STATUS
+03g1y59jwfg7cf99w4lt0f662    worker2   Ready   Active
+9j68exjopxe7wfl6yuxml7a7j    worker1   Ready   Active
+dxn1zf6l61qsb1josjja83ngz *  manager1  Ready   Active        Leader
+```
+
+🔹 ستون **MANAGER STATUS** فقط برای نودهای Manager مقدار دارد.
+🔹 نودهایی که در این ستون مقدار ندارند، **Worker** هستند.
+🔹 دستورات مدیریتی مانند `docker node ls` فقط روی نودهای **Manager** اجرا می‌شوند.
+
+---
+
+## 📊 نمودار Mermaid – اضافه کردن نودهای Worker
+
+```mermaid
+sequenceDiagram
+    participant M as Manager Node (manager1)
+    participant W1 as Worker Node 1
+    participant W2 as Worker Node 2
+
+    M->>M: docker swarm init (Generates Manager & Worker Tokens)
+    Note over M: Advertise Address: 192.168.99.100:2377
+
+    W1->>W1: docker swarm join --token <Worker-Token> 192.168.99.100:2377
+    W1-->>M: Join request sent
+    M-->>W1: Confirm join (Worker role)
+
+    W2->>W2: docker swarm join --token <Worker-Token> 192.168.99.100:2377
+    W2-->>M: Join request sent
+    M-->>W2: Confirm join (Worker role)
+
+    M->>M: docker node ls (Show all nodes in swarm)
+```
+
+---
+
+## 🎯 نکات کلیدی و امنیتی
+
+| گام         | توضیح                            | نکته امنیتی / عملیاتی                                   |
+| ----------- | -------------------------------- | ------------------------------------------------------- |
+| دریافت توکن | `docker swarm join-token worker` | توکن‌ها را در محل امن ذخیره کنید                        |
+| اجرای Join  | `docker swarm join --token ...`  | IP Manager باید ثابت و قابل دسترس باشد                  |
+| بررسی نودها | `docker node ls`                 | این دستور فقط روی Manager اجرا می‌شود                   |
+| نقش‌ها      | Worker فقط سرویس اجرا می‌کند     | تغییر نقش از Worker به Manager با `docker node promote` |
+
+
+# Deploy a service to the swarm
+
+## 🚀 استقرار یک سرویس در Swarm
+
+پس از اینکه [یک Swarm ایجاد کردید](create-swarm.md) و در این آموزش حتی [نودهای Worker را اضافه کردید](add-nodes.md) (که الزامی هم نیست)، می‌توانید سرویس خود را در Swarm مستقر کنید.
+
+---
+
+### 1️⃣ اتصال به نود Manager
+
+یک ترمینال باز کرده و با **SSH** به ماشینی که نقش **Manager** دارد وصل شوید.
+در مثال آموزشی، این ماشین با نام **`manager1`** شناخته می‌شود:
+
+```bash
+ssh user@manager1
+```
+
+---
+
+### 2️⃣ ایجاد سرویس
+
+برای ساخت یک سرویس، دستور زیر را اجرا کنید:
+
+```bash
+docker service create --replicas 1 --name helloworld alpine ping docker.com
+```
+
+📌 **توضیح پارامترها:**
+
+* `docker service create` → ایجاد یک سرویس جدید در Swarm.
+* `--name helloworld` → نام سرویس را **helloworld** تعیین می‌کند.
+* `--replicas 1` → وضعیت مطلوب (Desired State) یک نمونه در حال اجرا است.
+* `alpine ping docker.com` → سرویس بر اساس ایمیج **Alpine Linux** ساخته می‌شود و دستور `ping docker.com` درون آن اجرا می‌شود.
+
+📌 **نمونه خروجی:**
+
+```
+9uk4639qpg7npwf3fn2aasksr
+```
+
+این شناسه، **Service ID** شماست.
+
+---
+
+### 3️⃣ مشاهده سرویس‌های در حال اجرا
+
+برای لیست سرویس‌های فعال:
+
+```bash
+docker service ls
+```
+
+📌 **نمونه خروجی:**
+
+```
+ID            NAME        SCALE  IMAGE   COMMAND
+9uk4639qpg7n  helloworld  1/1    alpine  ping docker.com
+```
+
+---
+
+## 📊 نمودار Mermaid – جریان استقرار سرویس در Swarm
+
+```mermaid
+sequenceDiagram
+    participant U as User (CLI)
+    participant M as Manager Node
+    participant W as Worker Nodes
+
+    U->>M: docker service create --replicas 1 --name helloworld alpine ping docker.com
+    M->>M: ثبت Desired State (1 Replica)
+    M->>W: تخصیص Task اجرای کانتینر
+    W-->>M: گزارش وضعیت (Running)
+    U->>M: docker service ls
+    M-->>U: لیست سرویس‌ها و وضعیت Replicaها
+```
+
+---
+
+## 🎯 نکات کلیدی و عملیاتی
+
+| بخش                       | توضیح                           | نکته مهم                                                |
+| ------------------------- | ------------------------------- | ------------------------------------------------------- |
+| **Manager Node**          | محل اجرای دستورات مدیریتی Swarm | فقط روی Manager امکان‌پذیر است                          |
+| **docker service create** | ایجاد سرویس                     | پارامترهای نام، مقیاس و ایمیج ضروری هستند               |
+| **Replicas**              | تعداد نمونه‌های فعال سرویس      | Swarm به‌صورت خودکار تعداد را در حالت مطلوب نگه می‌دارد |
+| **docker service ls**     | نمایش سرویس‌ها                  | شامل وضعیت واقعی در مقابل Desired State                 |
+
+---
+# Inspect a service on the swarm
+
+## 🔍 بررسی یک سرویس در Swarm
+
+پس از اینکه [یک سرویس را در Swarm مستقر کردید](deploy-service.md)، می‌توانید با استفاده از **Docker CLI** جزئیات مربوط به آن سرویس را ببینید.
+
+---
+
+### 1️⃣ اتصال به نود Manager
+
+اگر هنوز متصل نشده‌اید، به ماشین **Manager** خود وارد شوید.
+در این آموزش، ماشین **`manager1`** استفاده می‌شود:
+
+```bash
+ssh user@manager1
+```
+
+---
+
+### 2️⃣ مشاهده جزئیات سرویس به‌صورت خوانا
+
+برای دیدن جزئیات سرویس در قالبی ساده و قابل خواندن:
+
+```bash
+docker service inspect --pretty <SERVICE-ID>
+```
+
+📌 برای سرویس `helloworld`:
+
+```bash
+docker service inspect --pretty helloworld
+```
+
+📌 **نمونه خروجی:**
+
+```
+ID:             9uk4639qpg7npwf3fn2aasksr
+Name:           helloworld
+Service Mode:   REPLICATED
+ Replicas:      1
+Placement:
+UpdateConfig:
+ Parallelism:   1
+ContainerSpec:
+ Image:         alpine
+ Args:          ping docker.com
+Resources:
+Endpoint Mode:  vip
+```
+
+💡 **نکته:**
+اگر بخواهید خروجی را به فرمت **JSON** ببینید (برای پردازش یا استفاده در اسکریپت‌ها)، `--pretty` را حذف کنید:
+
+```bash
+docker service inspect helloworld
+```
+
+---
+
+### 3️⃣ مشاهده نودهای میزبان سرویس
+
+برای دیدن اینکه کدام نودها سرویس را اجرا می‌کنند:
+
+```bash
+docker service ps <SERVICE-ID>
+```
+
+📌 برای مثال:
+
+```bash
+docker service ps helloworld
+```
+
+📌 **نمونه خروجی:**
+
+```
+NAME                                    IMAGE   NODE     DESIRED STATE  CURRENT STATE           ERROR  PORTS
+helloworld.1.8p1vev3fq5zm0mi8g0as41w35  alpine  worker2  Running        Running 3 minutes
+```
+
+🔹 در این مثال، تنها Replica سرویس `helloworld` روی **`worker2`** در حال اجراست.
+🔹 به‌طور پیش‌فرض، **Manager Node** نیز می‌تواند مانند Worker سرویس اجرا کند.
+
+---
+
+### 4️⃣ مشاهده جزئیات کانتینر سرویس
+
+روی نودی که Task در آن اجرا می‌شود، دستور زیر را بزنید:
+
+```bash
+docker ps
+```
+
+📌 اگر سرویس روی نود دیگری اجرا می‌شود، باید به آن نود SSH کنید.
+برای مثال، روی `worker2`:
+
+```bash
+ssh user@worker2
+docker ps
+```
+
+📌 **نمونه خروجی:**
+
+```
+CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES
+e609dde94e47        alpine:latest       "ping docker.com"   3 minutes ago       Up 3 minutes                            helloworld.1.8p1vev3fq5zm0mi8g0as41w35
+```
+
+---
+
+## 📊 نمودار Mermaid – جریان بررسی سرویس در Swarm
+
+```mermaid
+sequenceDiagram
+    participant U as User (CLI)
+    participant M as Manager Node
+    participant W as Worker Node
+
+    U->>M: docker service inspect --pretty helloworld
+    M-->>U: نمایش جزئیات سرویس (Readable Format)
+
+    U->>M: docker service ps helloworld
+    M-->>U: نمایش نود میزبان سرویس
+
+    alt سرویس روی Worker
+        U->>W: ssh به Worker
+        W->>W: docker ps
+        W-->>U: نمایش جزئیات کانتینر
+    else سرویس روی Manager
+        M->>M: docker ps
+        M-->>U: نمایش جزئیات کانتینر
+    end
+```
+
+---
+
+## 🎯 نکات کلیدی
+
+| دستور                             | کاربرد                    | نکته مهم                                      |
+| --------------------------------- | ------------------------- | --------------------------------------------- |
+| `docker service inspect --pretty` | نمایش خوانای مشخصات سرویس | مناسب مانیتورینگ دستی                         |
+| `docker service inspect`          | نمایش JSON مشخصات سرویس   | مناسب پردازش خودکار و اسکریپت‌ها              |
+| `docker service ps`               | نمایش محل اجرای Replicaها | بررسی هماهنگی Desired State و Current State   |
+| `docker ps`                       | نمایش جزئیات کانتینر      | باید روی همان نودی اجرا شود که Task در آن است |
+
+---
+
+# Scale the service in the swarm
+
+## 📈 مقیاس‌دهی (Scaling) سرویس در Swarm
+
+وقتی یک [سرویس را در Swarm مستقر کردید](deploy-service.md)، می‌توانید با استفاده از **Docker CLI** تعداد کانتینرهای آن سرویس را تغییر دهید.
+در معماری Swarm، **هر کانتینر یک Task محسوب می‌شود**.
+
+---
+
+### 1️⃣ اتصال به نود Manager
+
+اگر هنوز متصل نشده‌اید، به نود **Manager** وارد شوید.
+در مثال آموزشی، این ماشین با نام **`manager1`** استفاده می‌شود:
+
+```bash
+ssh user@manager1
+```
+
+---
+
+### 2️⃣ تغییر وضعیت مطلوب (Desired State) سرویس
+
+برای تغییر تعداد Replicaها (Tasks)، دستور زیر را اجرا کنید:
+
+```bash
+docker service scale <SERVICE-ID>=<NUMBER-OF-TASKS>
+```
+
+📌 مثال:
+برای افزایش سرویس `helloworld` از **۱** به **۵ Replica**:
+
+```bash
+docker service scale helloworld=5
+```
+
+📌 **خروجی:**
+
+```
+helloworld scaled to 5
+```
+
+---
+
+### 3️⃣ مشاهده لیست Tasks به‌روزشده
+
+برای دیدن محل اجرای Replicaها:
+
+```bash
+docker service ps helloworld
+```
+
+📌 **نمونه خروجی:**
+
+```
+NAME                                    IMAGE   NODE      DESIRED STATE  CURRENT STATE
+helloworld.1.8p1vev3fq5zm0mi8g0as41w35  alpine  worker2   Running        Running 7 minutes
+helloworld.2.c7a7tcdq5s0uk3qr88mf8xco6  alpine  worker1   Running        Running 24 seconds
+helloworld.3.6crl09vdcalvtfehfh69ogfb1  alpine  worker1   Running        Running 24 seconds
+helloworld.4.auky6trawmdlcne8ad8phb0f1  alpine  manager1  Running        Running 24 seconds
+helloworld.5.ba19kca06l18zujfwxyc5lkyn  alpine  worker2   Running        Running 24 seconds
+```
+
+🔹 Swarm برای رسیدن به ۵ Replica، **۴ Task جدید** ایجاد کرده است.
+🔹 این Tasks بین ۳ نود Swarm توزیع شده‌اند (حتی Manager هم یک Task اجرا می‌کند).
+
+---
+
+### 4️⃣ بررسی کانتینرهای یک نود خاص
+
+برای دیدن کانتینرهای در حال اجرا روی نودی که به آن متصل هستید:
+
+```bash
+docker ps
+```
+
+📌 روی `manager1`:
+
+```
+CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS               NAMES
+528d68040f95        alpine:latest       "ping docker.com"   About a minute ago   Up About a minute                       helloworld.4.auky6trawmdlcne8ad8phb0f1
+```
+
+اگر می‌خواهید کانتینرهای نودهای دیگر را ببینید، با **SSH** به آن‌ها وصل شوید و همان دستور را اجرا کنید.
+
+---
+
+## 📊 نمودار Mermaid – جریان Scaling سرویس در Swarm
+
+```mermaid
+sequenceDiagram
+    participant U as User (CLI)
+    participant M as Manager Node
+    participant W1 as Worker 1
+    participant W2 as Worker 2
+
+    U->>M: docker service scale helloworld=5
+    M->>M: تغییر Desired State به 5
+    M->>W1: تخصیص Taskهای جدید
+    M->>W2: تخصیص Taskهای جدید
+    M->>M: اجرای Task در Manager (در صورت نیاز)
+    U->>M: docker service ps helloworld
+    M-->>U: نمایش لیست Replicaها و محل اجرای آن‌ها
+```
+
+---
+
+## 🎯 نکات کلیدی
+
+| دستور                  | کاربرد                     | نکته مهم                                       |
+| ---------------------- | -------------------------- | ---------------------------------------------- |
+| `docker service scale` | تغییر تعداد Replicaها      | فقط روی Manager اجرا می‌شود                    |
+| `docker service ps`    | نمایش لیست Tasks           | وضعیت **Desired** و **Current** را مقایسه کنید |
+| `docker ps`            | نمایش کانتینرها روی یک نود | باید روی همان نود اجرا شود                     |
+
+---
+
+# Delete the service running on the swarm
+
+## 🗑 حذف سرویس در Swarm
+
+اکنون که مراحل آموزش با سرویس `helloworld` به پایان رسیده، می‌توانیم آن را از Swarm حذف کنیم.
+
+---
+
+### 1️⃣ اتصال به نود Manager
+
+اگر هنوز متصل نشده‌اید، به نود **Manager** وارد شوید.
+در مثال آموزشی، این ماشین با نام **`manager1`** استفاده می‌شود:
+
+```bash
+ssh user@manager1
+```
+
+---
+
+### 2️⃣ اجرای دستور حذف سرویس
+
+برای حذف سرویس `helloworld`:
+
+```bash
+docker service rm helloworld
+```
+
+📌 **نمونه خروجی:**
+
+```
+helloworld
+```
+
+---
+
+### 3️⃣ اطمینان از حذف سرویس
+
+برای بررسی اینکه سرویس واقعاً حذف شده است:
+
+```bash
+docker service inspect helloworld
+```
+
+📌 **خروجی مورد انتظار:**
+
+```
+[]
+Status: Error: no such service: helloworld, Code: 1
+```
+
+این پیام نشان می‌دهد که سرویس دیگر در Swarm وجود ندارد.
+
+---
+
+### 4️⃣ بررسی پاک شدن کانتینرها
+
+هرچند سرویس حذف شده، ممکن است **Task Containerها** چند ثانیه طول بکشند تا به‌طور کامل پاک شوند.
+برای بررسی روی نودها:
+
+```bash
+docker ps
+```
+
+📌 ممکن است ابتدا این وضعیت را ببینید:
+
+```
+CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS   NAMES
+db1651f50347        alpine:latest       "ping docker.com"   44 minutes ago      Up 46 seconds       ...     helloworld.5....
+43bf6e532a92        alpine:latest       "ping docker.com"   44 minutes ago      Up 46 seconds       ...     helloworld.3....
+...
+```
+
+چند لحظه بعد دوباره اجرا کنید:
+
+```
+CONTAINER ID   IMAGE   COMMAND   CREATED   STATUS   PORTS   NAMES
+```
+
+لیست خالی نشان می‌دهد که کانتینرها هم پاک شده‌اند.
+
+---
+
+## 📊 نمودار Mermaid – جریان حذف سرویس در Swarm
+
+```mermaid
+sequenceDiagram
+    participant U as User (CLI)
+    participant M as Manager Node
+    participant N as Worker/Manager Nodes
+
+    U->>M: docker service rm helloworld
+    M->>M: حذف سرویس از Swarm Manager
+    M->>N: ارسال دستور توقف و حذف Tasks
+    N-->>M: تایید حذف Tasks
+    U->>M: docker service inspect helloworld
+    M-->>U: Error: no such service
+    U->>N: docker ps
+    N-->>U: لیست خالی (کانتینرها حذف شدند)
+```
+
+---
+
+## 🎯 نکات کلیدی
+
+| دستور                      | کاربرد                  | نکته مهم                             |
+| -------------------------- | ----------------------- | ------------------------------------ |
+| `docker service rm <name>` | حذف سرویس از Swarm      | فقط روی Manager اجرا می‌شود          |
+| `docker service inspect`   | بررسی وضعیت سرویس       | خطای `no such service` یعنی حذف موفق |
+| `docker ps`                | بررسی پاک شدن کانتینرها | ممکن است چند ثانیه زمان ببرد         |
+
+# Apply rolling updates to a service
+
+
+## 🔄 اجرای Rolling Update روی سرویس در Swarm
+
+در مراحل قبلی، شما یک سرویس را [مقیاس‌دهی کردید](scale-service.md).
+در این بخش، ابتدا یک سرویس بر اساس ایمیج `redis:7.4.0` مستقر می‌کنیم و سپس آن را به نسخه `redis:7.4.1` ارتقا می‌دهیم، به‌طوری‌که بروزرسانی به صورت مرحله‌ای (Rolling) و با تأخیر مشخص بین هر Replica انجام شود.
+
+---
+
+### 1️⃣ اتصال به نود Manager
+
+اگر هنوز متصل نشده‌اید، به ماشین **Manager** وصل شوید.
+در مثال آموزشی، این ماشین **`manager1`** است:
+
+```bash
+ssh user@manager1
+```
+
+---
+
+### 2️⃣ استقرار سرویس Redis با سیاست Rolling Update
+
+برای ایجاد سرویس Redis با ۳ Replica و تأخیر ۱۰ ثانیه بین هر بروزرسانی:
+
+```bash
+docker service create \
+  --replicas 3 \
+  --name redis \
+  --update-delay 10s \
+  redis:7.4.0
+```
+
+📌 **توضیح پارامترها:**
+
+* `--replicas 3` → تعداد Replicaها.
+* `--update-delay 10s` → فاصله زمانی بین بروزرسانی هر Task.
+* می‌توانید زمان را ترکیبی وارد کنید (مثلاً `10m30s`).
+* `--update-parallelism` → تعداد Taskهایی که همزمان بروزرسانی می‌شوند (پیش‌فرض 1).
+* `--update-failure-action` → مشخص می‌کند در صورت شکست بروزرسانی چه اتفاقی بیفتد (`pause`، `continue` یا `rollback`).
+
+---
+
+### 3️⃣ بررسی سرویس
+
+برای مشاهده جزئیات سرویس:
+
+```bash
+docker service inspect --pretty redis
+```
+
+📌 خروجی نمونه:
+
+```
+Name:           redis
+Replicas:       3
+UpdateConfig:
+ Parallelism:   1
+ Delay:         10s
+ContainerSpec:
+ Image:         redis:7.4.0
+```
+
+---
+
+### 4️⃣ به‌روزرسانی Rolling به نسخه جدید
+
+برای ارتقاء به نسخه `redis:7.4.1`:
+
+```bash
+docker service update --image redis:7.4.1 redis
+```
+
+📌 روند پیش‌فرض Scheduler:
+
+1. توقف اولین Task.
+2. راه‌اندازی Task با نسخه جدید.
+3. اگر Task به حالت RUNNING رفت، بعد از Delay مشخص به سراغ Task بعدی می‌رود.
+4. اگر Task به حالت FAILED رفت، بروزرسانی متوقف می‌شود.
+
+---
+
+### 5️⃣ بررسی نسخه جدید در Desired State
+
+```bash
+docker service inspect --pretty redis
+```
+
+📌 خروجی پس از بروزرسانی موفق:
+
+```
+Image:         redis:7.4.1
+```
+
+📌 اگر بروزرسانی متوقف شود:
+
+```
+Update status:
+ State:    paused
+ Message:  update paused due to failure...
+```
+
+برای ادامه بروزرسانی:
+
+```bash
+docker service update redis
+```
+
+---
+
+### 6️⃣ مشاهده فرآیند Rolling Update
+
+```bash
+docker service ps redis
+```
+
+📌 نمونه خروجی:
+
+```
+redis.1   redis:7.4.1  worker1   Running
+ \_ redis.1  redis:7.4.0  worker2   Shutdown
+redis.2   redis:7.4.1  worker2   Running
+ \_ redis.2  redis:7.4.0  worker1   Shutdown
+redis.3   redis:7.4.1  worker1   Running
+ \_ redis.3  redis:7.4.0  manager1  Shutdown
+```
+
+🔹 تا قبل از اتمام بروزرسانی، بعضی Replicaها نسخه قدیم و برخی نسخه جدید را اجرا می‌کنند.
+
+---
+
+## 📊 نمودار Mermaid – جریان Rolling Update
+
+```mermaid
+sequenceDiagram
+    participant U as User (CLI)
+    participant M as Manager Node
+    participant N1 as Node 1
+    participant N2 as Node 2
+    participant N3 as Node 3
+
+    U->>M: docker service update --image redis:7.4.1 redis
+    M->>N1: Stop Task (redis:7.4.0) & Start redis:7.4.1
+    Note over M: Wait 10s (Update Delay)
+    M->>N2: Stop Task (redis:7.4.0) & Start redis:7.4.1
+    Note over M: Wait 10s
+    M->>N3: Stop Task (redis:7.4.0) & Start redis:7.4.1
+    M-->>U: Rolling Update Complete
+```
+
+---
+
+## 🎯 نکات کلیدی
+
+| گزینه                     | توضیح                                      | مثال                            |
+| ------------------------- | ------------------------------------------ | ------------------------------- |
+| `--update-delay`          | زمان بین بروزرسانی Taskها                  | `10s` یا `1m30s`                |
+| `--update-parallelism`    | تعداد Taskهایی که همزمان بروزرسانی می‌شوند | `--update-parallelism 2`        |
+| `--update-failure-action` | رفتار در شکست بروزرسانی                    | `pause`, `continue`, `rollback` |
+| `docker service ps`       | مشاهده وضعیت هر Replica                    | بررسی تفاوت نسخه قدیم و جدید    |
+
+
+# Drain a node on the swarm
+
+## 🛑 قرار دادن یک نود در حالت Drain در Swarm
+
+در مراحل قبل، همه نودهای شما در وضعیت **Active** بودند.
+وقتی یک نود **Active** است، Swarm Manager می‌تواند به آن Task اختصاص دهد.
+اما گاهی (مثل زمان‌های تعمیرات یا نگهداری) لازم است نودی را در وضعیت **Drain** قرار دهید.
+
+حالت **Drain** باعث می‌شود:
+
+* نود هیچ Task جدیدی از سرویس‌های Swarm دریافت نکند.
+* Taskهای فعلی روی آن متوقف شوند و روی نودهای Active دیگر اجرا شوند.
+
+> ⚠️ **مهم:**
+> حالت Drain فقط روی **Taskهای سرویس‌های Swarm** اثر دارد.
+> کانتینرهای مستقل (ایجاد شده با `docker run`، `docker compose up` یا API) حذف یا متوقف نمی‌شوند.
+
+---
+
+## 1️⃣ اتصال به نود Manager
+
+اگر هنوز به نود Manager متصل نیستید، وارد شوید.
+در این آموزش، نود Manager با نام **`manager1`** است:
+
+```bash
+ssh کاربر@manager1
+```
+
+---
+
+## 2️⃣ بررسی وضعیت فعلی همه نودها
+
+برای دیدن وضعیت همه نودها:
+
+```bash
+docker node ls
+```
+
+نمونه خروجی:
+
+```
+ID                           HOSTNAME  STATUS  AVAILABILITY  MANAGER STATUS
+1bcef6utixb0l0ca7gxuivsj0    worker2   Ready   Active
+38ciaotwjuritcdtn9npbnkuz    worker1   Ready   Active
+e216jshn25ckzbvmwlnh5jr3g *  manager1  Ready   Active        Leader
+```
+
+> همه نودها در حالت Active هستند.
+
+---
+
+## 3️⃣ اجرای سرویس Redis (در صورت اجرا نشدن قبلی)
+
+اگر سرویس Redis از مرحله [Rolling Update](rolling-update.md) هنوز فعال نیست، آن را اجرا کنید:
+
+```bash
+docker service create --replicas 3 --name redis --update-delay 10s redis:7.4.0
+```
+
+نمونه خروجی:
+
+```
+c5uo6kdmzpon37mgj9mwglcfw
+```
+
+---
+
+## 4️⃣ مشاهده توزیع Taskها
+
+برای دیدن اینکه Taskهای سرویس بین چه نودهایی توزیع شده‌اند:
+
+```bash
+docker service ps redis
+```
+
+نمونه خروجی:
+
+```
+NAME                               IMAGE        NODE     DESIRED STATE  CURRENT STATE
+redis.1.7q92v0nr1hcgts2amcjyqg3pq  redis:7.4.0  manager1 Running        Running 26 seconds
+redis.2.7h2l8h3q3wqy5f66hlv9ddmi6  redis:7.4.0  worker1  Running        Running 26 seconds
+redis.3.9bg7cezvedmkgg6c8yzvbhwsd  redis:7.4.0  worker2  Running        Running 26 seconds
+```
+
+> اینجا هر نود یک Task دریافت کرده است.
+
+---
+
+## 5️⃣ تغییر وضعیت یک نود به Drain
+
+برای قرار دادن `worker1` در حالت Drain:
+
+```bash
+docker node update --availability drain worker1
+```
+
+نمونه خروجی:
+
+```
+worker1
+```
+
+---
+
+## 6️⃣ بررسی وضعیت نود Drain شده
+
+برای دیدن جزئیات:
+
+```bash
+docker node inspect --pretty worker1
+```
+
+نمونه خروجی:
+
+```
+ID:                  38ciaotwjuritcdtn9npbnkuz
+Hostname:            worker1
+Status:
+ State:              Ready
+ Availability:       Drain
+...بخش‌های دیگر...
+```
+
+> حالا Availability برابر Drain است.
+
+---
+
+## 7️⃣ مشاهده جابه‌جایی Taskها
+
+وقتی یک نود Drain شود، Swarm Taskهای آن را روی نودهای Active اجرا می‌کند.
+
+```bash
+docker service ps redis
+```
+
+نمونه خروجی:
+
+```
+NAME                                    IMAGE        NODE      DESIRED STATE  CURRENT STATE           ERROR
+redis.1.7q92v0nr1hcgts2amcjyqg3pq       redis:7.4.0  manager1  Running        Running 4 minutes
+redis.2.b4hovzed7id8irg1to42egue8       redis:7.4.0  worker2   Running        Running About a minute
+ \_ redis.2.7h2l8h3q3wqy5f66hlv9ddmi6   redis:7.4.0  worker1   Shutdown       Shutdown 2 minutes ago
+redis.3.9bg7cezvedmkgg6c8yzvbhwsd       redis:7.4.0  worker2   Running        Running 4 minutes
+```
+
+> Task شماره 2 که قبلاً روی worker1 بود، روی worker2 راه‌اندازی شده است.
+
+---
+
+## 8️⃣ بازگرداندن نود به حالت Active
+
+برای فعال‌سازی دوباره worker1:
+
+```bash
+docker node update --availability active worker1
+```
+
+نمونه خروجی:
+
+```
+worker1
+```
+
+---
+
+## 9️⃣ بررسی تغییر وضعیت
+
+```bash
+docker node inspect --pretty worker1
+```
+
+نمونه خروجی:
+
+```
+ID:                  38ciaotwjuritcdtn9npbnkuz
+Hostname:            worker1
+Status:
+ State:              Ready
+ Availability:       Active
+...بخش‌های دیگر...
+```
+
+> حالا worker1 دوباره می‌تواند Taskهای جدید بگیرد، چه در مقیاس‌گذاری، چه Rolling Update و چه در جایگزینی Taskهای خراب.
+
+---
+
+## 📊 نمودار Mermaid – فرآیند Drain و Active
+
+```mermaid
+sequenceDiagram
+    participant U as کاربر (CLI)
+    participant M as Manager Node
+    participant W1 as Worker1
+    participant W2 as Worker2
+
+    U->>M: docker node update --availability drain worker1
+    M->>W1: توقف Taskهای Swarm
+    M->>W2: اجرای Taskهای جایگزین
+    U->>M: docker node inspect --pretty worker1
+    M-->>U: نمایش وضعیت Drain
+    U->>M: docker node update --availability active worker1
+    M-->>U: worker1 به Active برگشت
+```
+
+---
+
+## 🎯 نکات کلیدی
+
+| دستور                                      | کاربرد                            | نکته مهم                                    |
+| ------------------------------------------ | --------------------------------- | ------------------------------------------- |
+| `docker node update --availability drain`  | غیرفعال کردن نود برای دریافت Task | فقط Taskهای سرویس‌های Swarm جابه‌جا می‌شوند |
+| `docker node inspect --pretty`             | بررسی وضعیت نود                   | Availability باید Drain یا Active باشد      |
+| `docker node update --availability active` | فعال‌سازی مجدد نود                | بعد از فعال‌سازی، نود آماده دریافت Task است |
